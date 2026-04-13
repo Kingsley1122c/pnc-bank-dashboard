@@ -1,0 +1,238 @@
+[
+  {
+    "id": "USR-0001",
+    "role": "user",
+    "status": "Flagged",
+    "name": "Example User",
+    "email": "example@pnc.bank",
+    "phone": "+1 202 555 0146",
+    "password": "example123",
+    "segment": "Platinum Client",
+    "avatar": "EU",
+    "accounts": [
+      {
+        "label": "Savings",
+        "amount": 72931.67
+      },
+      {
+        "label": "Current",
+        "amount": 46800.23
+      },
+      {
+        "label": "Business",
+        "amount": 8710
+      }
+    ],
+    "savedBanks": [
+      {
+        "id": "BNK-1001",
+        "bankName": "Chase Bank",
+        "accountName": "Example User",
+        "accountNumber": "**** 1048"
+      },
+      {
+        "id": "BNK-1002",
+        "bankName": "Bank of America",
+        "accountName": "Example User",
+        "accountNumber": "**** 2204"
+      }
+    ],
+    "verificationStatus": "Verified",
+    "notifications": [
+      {
+        "id": "ANN-1776066036235-USR-0001",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "hullo",
+        "channel": "Push + Email",
+        "audience": "Example User",
+        "createdAt": "2026-04-13T07:40:36.235Z",
+        "readAt": "2026-04-13T07:41:26.455Z"
+      },
+      {
+        "id": "ANN-1776042964856-USR-0001",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-13T01:16:04.856Z",
+        "readAt": "2026-04-13T07:41:26.455Z"
+      },
+      {
+        "id": "ANN-1776042903138-USR-0001",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-13T01:15:03.138Z",
+        "readAt": "2026-04-13T07:41:26.455Z"
+      },
+      {
+        "id": "ANN-1776013212361-USR-0001",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T17:00:12.361Z",
+        "readAt": "2026-04-12T17:00:37.885Z"
+      },
+      {
+        "id": "ANN-1776013211828-USR-0001",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T17:00:11.828Z",
+        "readAt": "2026-04-12T17:00:37.885Z"
+      },
+      {
+        "id": "ANN-1776013210378-USR-0001",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T17:00:10.378Z",
+        "readAt": "2026-04-12T17:00:37.885Z"
+      },
+      {
+        "id": "ANN-1776013197820-USR-0001",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T16:59:57.815Z",
+        "readAt": "2026-04-12T17:00:37.885Z"
+      }
+    ],
+    "pendingIncomingTransfers": [],
+    "accountNumber": "1825631418",
+    "routingNumber": "031100089",
+    "issuedCards": []
+  },
+  {
+    "id": "ADM-0001",
+    "role": "admin",
+    "status": "Active",
+    "name": "Admin Control",
+    "email": "admin@pnc.bank",
+    "phone": "+1 202 555 0188",
+    "password": "admin123",
+    "segment": "Super Admin",
+    "avatar": "AD",
+    "accounts": [],
+    "savedBanks": [],
+    "verificationStatus": "Verified",
+    "notifications": [],
+    "pendingIncomingTransfers": [],
+    "accountNumber": "",
+    "routingNumber": "",
+    "issuedCards": []
+  },
+  {
+    "id": "USR-0003",
+    "role": "user",
+    "status": "Suspended",
+    "verificationStatus": "Verified",
+    "name": "Okoye Chukwuebuka",
+    "email": "Chukwuebuka@pnc.bank",
+    "phone": "+1 5838899742",
+    "password": "password123",
+    "segment": "Digital Client",
+    "avatar": "OC",
+    "accounts": [
+      {
+        "label": "Savings",
+        "amount": 0
+      },
+      {
+        "label": "Current",
+        "amount": 9
+      },
+      {
+        "label": "Business",
+        "amount": 0
+      }
+    ],
+    "accountNumber": "1051299522",
+    "routingNumber": "031100089",
+    "notifications": [
+      {
+        "id": "ANN-1776042964856-USR-0003",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-13T01:16:04.856Z",
+        "readAt": null
+      },
+      {
+        "id": "ANN-1776042903138-USR-0003",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-13T01:15:03.138Z",
+        "readAt": null
+      },
+      {
+        "id": "ANN-1776013212361-USR-0003",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T17:00:12.361Z",
+        "readAt": null
+      },
+      {
+        "id": "ANN-1776013211828-USR-0003",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T17:00:11.828Z",
+        "readAt": null
+      },
+      {
+        "id": "ANN-1776013210378-USR-0003",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T17:00:10.378Z",
+        "readAt": null
+      },
+      {
+        "id": "ANN-1776013197820-USR-0003",
+        "type": "admin-announcement",
+        "title": "Admin message",
+        "message": "Operations update issued",
+        "channel": "Push + Email",
+        "audience": "All retail users",
+        "createdAt": "2026-04-12T16:59:57.815Z",
+        "readAt": null
+      },
+      {
+        "id": "NOTICE-VERIFIED-1775796043268",
+        "type": "verification-complete",
+        "message": "Your account verification is complete. Held incoming PNC transfers have been released to your account.",
+        "title": "Account update",
+        "createdAt": "2026-04-10T04:50:51.231Z",
+        "readAt": "2026-04-10T04:50:53.612Z"
+      }
+    ],
+    "pendingIncomingTransfers": [],
+    "savedBanks": [],
+    "issuedCards": []
+  }
+]

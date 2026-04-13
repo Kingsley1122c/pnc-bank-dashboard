@@ -1,0 +1,395 @@
+{
+  "adminSection": "Overview",
+  "adminNotice": "Announcement queued for Example User.",
+  "adminUserRecords": [
+    {
+      "accountId": "USR-0001",
+      "customerId": "CUS-2001",
+      "name": "Example User",
+      "email": "example@pnc.bank",
+      "phone": "+1 202 555 0146",
+      "segment": "Platinum Client",
+      "balance": "$128,441.90",
+      "activity": "High",
+      "kyc": "Verified",
+      "status": "Flagged",
+      "lastActivity": "Just now",
+      "riskScore": 88,
+      "kycLevel": "Verified Tier 2",
+      "transferLimit": "15000",
+      "cardLimit": "5000",
+      "accountNumber": "1825631418",
+      "verificationStatus": "Verified"
+    },
+    {
+      "accountId": "USR-0003",
+      "customerId": "CUS-2002",
+      "accountNumber": "1051299522",
+      "name": "Okoye Chukwuebuka",
+      "email": "Chukwuebuka@pnc.bank",
+      "phone": "+1 5838899742",
+      "segment": "Digital Client",
+      "balance": "$9.00",
+      "activity": "Moderate",
+      "kyc": "Verified",
+      "status": "Suspended",
+      "verificationStatus": "Verified",
+      "lastActivity": "Just now",
+      "riskScore": 64,
+      "kycLevel": "Verified Tier 2",
+      "transferLimit": "15000",
+      "cardLimit": "5000"
+    },
+    {
+      "name": "Maya Thompson",
+      "segment": "Premier",
+      "balance": "$48,420",
+      "activity": "High",
+      "kyc": "Verified",
+      "status": "Active",
+      "accountId": "LEGACY-0001",
+      "customerId": "CUS-1001",
+      "email": "maya@pnc.bank",
+      "phone": "+1 202 555 0161",
+      "lastActivity": "2 minutes ago",
+      "riskScore": 14,
+      "kycLevel": "Verified Tier 3",
+      "transferLimit": "15000",
+      "cardLimit": "5000"
+    },
+    {
+      "name": "Daniel Kwame",
+      "segment": "Retail",
+      "balance": "$6,820",
+      "activity": "Moderate",
+      "kyc": "Pending",
+      "status": "Active",
+      "accountId": "LEGACY-0002",
+      "customerId": "CUS-1002",
+      "email": "daniel@pnc.bank",
+      "phone": "+1 202 555 0162",
+      "lastActivity": "Just now",
+      "riskScore": 18,
+      "kycLevel": "Pending Review",
+      "transferLimit": "15000",
+      "cardLimit": "5000"
+    },
+    {
+      "name": "Sophia Reed",
+      "segment": "Business",
+      "balance": "$112,900",
+      "activity": "High",
+      "kyc": "Verified",
+      "status": "Flagged",
+      "accountId": "LEGACY-0003",
+      "customerId": "CUS-1003",
+      "email": "sophia@pnc.bank",
+      "phone": "+1 202 555 0163",
+      "lastActivity": "6 minutes ago",
+      "riskScore": 82,
+      "kycLevel": "Verified Tier 2",
+      "transferLimit": "15000",
+      "cardLimit": "5000"
+    },
+    {
+      "name": "Ethan Cole",
+      "segment": "Retail",
+      "balance": "$14,100",
+      "activity": "Low",
+      "kyc": "Verified",
+      "status": "Active",
+      "accountId": "LEGACY-0004",
+      "customerId": "CUS-1004",
+      "email": "ethan@pnc.bank",
+      "phone": "+1 202 555 0164",
+      "lastActivity": "45 minutes ago",
+      "riskScore": 23,
+      "kycLevel": "Verified Tier 2",
+      "transferLimit": "15000",
+      "cardLimit": "5000"
+    }
+  ],
+  "adminWithdrawalRecords": [
+    {
+      "id": "WD-4220",
+      "amount": "$1,800.00",
+      "destination": "Chase Bank • **** 1048",
+      "requested": "Apr 09, 2026",
+      "status": "Approved",
+      "code": "PNC-740056",
+      "requesterId": "USR-0001",
+      "requesterName": "Example User",
+      "supportMessage": "Hello customer service, I need my withdrawal code for request WD-4220. Customer: Example User. Amount: $1,800.00. Destination bank: Chase Bank (**** 1048)."
+    },
+    {
+      "id": "WD-2110",
+      "amount": "$2,500.00",
+      "destination": "PNC Platinum Checking",
+      "requested": "Apr 06, 2026",
+      "status": "Pending",
+      "code": "Awaiting approval"
+    },
+    {
+      "id": "WD-2104",
+      "amount": "$1,200.00",
+      "destination": "External Bank Transfer",
+      "requested": "Apr 04, 2026",
+      "status": "Approved",
+      "code": "PNC-882194"
+    },
+    {
+      "id": "WD-2098",
+      "amount": "$320.00",
+      "destination": "Cash Desk Pickup",
+      "requested": "Apr 01, 2026",
+      "status": "Rejected",
+      "code": "Not issued"
+    }
+  ],
+  "adminCardRecords": [
+    {
+      "id": "VC-503",
+      "type": "Virtual Card ATM Card - Generated",
+      "requested": "Apr 11, 2026",
+      "status": "Active",
+      "requesterId": "USR-0001",
+      "requesterName": "Example User"
+    },
+    {
+      "id": "VC-902",
+      "type": "Virtual Card ATM Card - Generated",
+      "requested": "Apr 10, 2026",
+      "status": "Active",
+      "requesterId": "USR-0003",
+      "requesterName": "Okoye Chukwuebuka"
+    },
+    {
+      "id": "VC-301",
+      "type": "Virtual ATM Card - Generated",
+      "requested": "Apr 05, 2026",
+      "status": "Active"
+    },
+    {
+      "id": "VC-287",
+      "type": "Virtual ATM Card",
+      "requested": "Mar 31, 2026",
+      "status": "Approved"
+    },
+    {
+      "id": "VC-276",
+      "type": "Virtual ATM Card",
+      "requested": "Mar 28, 2026",
+      "status": "Rejected"
+    }
+  ],
+  "adminNotificationRecords": [
+    {
+      "id": "ANN-1776066036235",
+      "title": "hullo",
+      "audience": "Example User",
+      "channel": "Push + Email",
+      "status": "Queued",
+      "createdAt": "2026-04-13T07:40:36.235Z"
+    },
+    {
+      "id": "ANN-1776042964856",
+      "title": "Operations update issued",
+      "audience": "All retail users",
+      "channel": "Push + Email",
+      "status": "Queued",
+      "createdAt": "2026-04-13T01:16:04.856Z"
+    },
+    {
+      "id": "ANN-1776042903138",
+      "title": "Operations update issued",
+      "audience": "All retail users",
+      "channel": "Push + Email",
+      "status": "Queued",
+      "createdAt": "2026-04-13T01:15:03.138Z"
+    },
+    {
+      "id": "ANN-1776013212361",
+      "title": "Operations update issued",
+      "audience": "All retail users",
+      "channel": "Push + Email",
+      "status": "Queued",
+      "createdAt": "2026-04-12T17:00:12.361Z"
+    },
+    {
+      "id": "ANN-1776013211828",
+      "title": "Operations update issued",
+      "audience": "All retail users",
+      "channel": "Push + Email",
+      "status": "Queued",
+      "createdAt": "2026-04-12T17:00:11.828Z"
+    },
+    {
+      "id": "ANN-1776013210378",
+      "title": "Operations update issued",
+      "audience": "All retail users",
+      "channel": "Push + Email",
+      "status": "Queued",
+      "createdAt": "2026-04-12T17:00:10.378Z"
+    }
+  ],
+  "adminActivityRecords": [
+    "00:40 - Admin Control queued a new announcement for Example User.",
+    "18:17 - Admin Control opened Overview.",
+    "18:16 - Admin Control queued a new announcement for All retail users.",
+    "18:15 - Admin Control opened Example User's profile.",
+    "18:15 - Admin Control opened Users Management.",
+    "18:15 - Admin Control queued a new announcement for All retail users.",
+    "18:14 - Admin Control opened Overview.",
+    "18:11 - Admin Control opened Example User's profile."
+  ],
+  "adminLiveEvents": [
+    "00:40 - Admin Control queued a new announcement for Example User.",
+    "18:16 - Admin Control queued a new announcement for All retail users.",
+    "18:15 - Admin Control queued a new announcement for All retail users.",
+    "10:00 - Admin Control queued a new announcement.",
+    "10:00 - Admin Control queued a new announcement.",
+    "10:00 - Admin Control queued a new announcement."
+  ],
+  "adminTransactionRecords": [
+    {
+      "id": "TX-1161",
+      "name": "Okoye Chukwuebuka",
+      "type": "Transfer",
+      "amount": "-$9.00",
+      "date": "Apr 09, 2026",
+      "status": "Pending Verification",
+      "owner": "Example User",
+      "reviewStatus": "Reviewed",
+      "destination": "PNC Bank • **** 9522",
+      "note": ""
+    },
+    {
+      "id": "TX-1001",
+      "name": "Netflix Premium",
+      "type": "Subscription",
+      "amount": "-$24.99",
+      "date": "Apr 07, 2026",
+      "status": "Completed",
+      "reviewStatus": "Reviewed",
+      "owner": "Maya Thompson"
+    },
+    {
+      "id": "TX-1002",
+      "name": "Salary Credit",
+      "type": "Income",
+      "amount": "+$8,400.00",
+      "date": "Apr 06, 2026",
+      "status": "Completed",
+      "reviewStatus": "Reviewed",
+      "owner": "Daniel Kwame"
+    },
+    {
+      "id": "TX-1003",
+      "name": "BlueJet Airlines",
+      "type": "Travel",
+      "amount": "-$640.00",
+      "date": "Apr 05, 2026",
+      "status": "Completed",
+      "reviewStatus": "Flagged",
+      "owner": "Sophia Reed"
+    },
+    {
+      "id": "TX-1004",
+      "name": "Apex Investment Fund",
+      "type": "Investment",
+      "amount": "-$1,250.00",
+      "date": "Apr 03, 2026",
+      "status": "Pending",
+      "reviewStatus": "Pending Review",
+      "owner": "Ethan Cole"
+    },
+    {
+      "id": "TX-1005",
+      "name": "Utility Board",
+      "type": "Bills",
+      "amount": "-$186.40",
+      "date": "Apr 02, 2026",
+      "status": "Completed",
+      "reviewStatus": "Monitored",
+      "owner": "Example User"
+    }
+  ],
+  "adminCaseRecords": [
+    {
+      "id": "CASE-680",
+      "type": "Support",
+      "subject": "account issue",
+      "owner": "Example User",
+      "requesterId": "USR-0001",
+      "priority": "High",
+      "status": "Resolved",
+      "assignee": "Support Desk",
+      "message": "i dont know how to withdraw"
+    },
+    {
+      "id": "CASE-601",
+      "type": "Support",
+      "subject": "Incoming transfer assistance",
+      "owner": "Example User",
+      "requesterId": "USR-0001",
+      "priority": "High",
+      "status": "Resolved",
+      "assignee": "Support Desk",
+      "message": "I need help funding account 2025550146 with reference PNC-0001-EXAMPLE."
+    },
+    {
+      "id": "CASE-201",
+      "type": "KYC",
+      "subject": "Daniel Kwame verification review",
+      "owner": "Daniel Kwame",
+      "priority": "Medium",
+      "status": "Open",
+      "assignee": "Compliance Desk"
+    },
+    {
+      "id": "CASE-202",
+      "type": "Fraud",
+      "subject": "Sophia Reed high velocity transfers",
+      "owner": "Sophia Reed",
+      "priority": "High",
+      "status": "Escalated",
+      "assignee": "Fraud Analyst"
+    },
+    {
+      "id": "CASE-203",
+      "type": "Support",
+      "subject": "Example User card activation issue",
+      "owner": "Example User",
+      "priority": "Medium",
+      "status": "Resolved",
+      "assignee": "Support Desk"
+    }
+  ],
+  "adminSettings": {
+    "alerts": true,
+    "biometricApproval": true,
+    "maintenanceMode": false,
+    "autoFreeze": true
+  },
+  "adminExportHistory": [
+    {
+      "id": "RPT-392",
+      "label": "Overview Export",
+      "createdAt": "Just now",
+      "status": "Ready"
+    },
+    {
+      "id": "RPT-101",
+      "label": "Operations Snapshot",
+      "createdAt": "Apr 08, 2026 09:10",
+      "status": "Ready"
+    },
+    {
+      "id": "RPT-100",
+      "label": "Fraud Summary",
+      "createdAt": "Apr 08, 2026 08:45",
+      "status": "Ready"
+    }
+  ],
+  "selectedUser": "Example User"
+}
