@@ -1608,7 +1608,7 @@ function App() {
     audience: 'All retail users',
     channel: 'Push + Email',
   });
-  const [userEditForm, setUserEditForm] = useState({ segment: '', kycLevel: '' });
+  const [userEditForm, setUserEditForm] = useState({ segment: '', kycLevel: '', password: '' });
   const [adminCreditForm, setAdminCreditForm] = useState({ amount: '', accountLabel: 'Current', note: '' });
   const [adminFundingReceipt, setAdminFundingReceipt] = useState(null);
   const [adminFundingResult, setAdminFundingResult] = useState(null);
@@ -1995,6 +1995,7 @@ function App() {
     setUserEditForm({
       segment: selectedAdminRecord.segment,
       kycLevel: selectedAdminRecord.kycLevel,
+      password: selectedAdminRecord.password ?? '',
     });
     setAdminCreditForm({
       amount: '',
@@ -3118,6 +3119,8 @@ function App() {
       return;
     }
 
+    const nextPassword = userEditForm.password.trim() || selectedAdminRecord.password || '';
+
     setAdminUserRecords((current) =>
       current.map((user) =>
         user.name === selectedAdminRecord.name
@@ -3125,9 +3128,22 @@ function App() {
               ...user,
               segment: userEditForm.segment.trim() || user.segment,
               kycLevel: userEditForm.kycLevel.trim() || user.kycLevel,
+              password: nextPassword,
               lastActivity: 'Just now',
             }
           : user,
+      ),
+    );
+
+    setAccounts((current) =>
+      current.map((account) =>
+        account.id === selectedAdminRecord.accountId
+          ? {
+              ...account,
+              segment: userEditForm.segment.trim() || account.segment,
+              password: nextPassword,
+            }
+          : account,
       ),
     );
 
@@ -7403,6 +7419,10 @@ function AdminDashboard({
                       <label className="input-shell admin-form-field">
                         <span>KYC Level</span>
                         <input value={userEditForm.kycLevel} onChange={(event) => onUserEditChange('kycLevel', event.target.value)} />
+                      </label>
+                      <label className="input-shell admin-form-field admin-form-field-wide">
+                        <span>Password</span>
+                        <input value={userEditForm.password} onChange={(event) => onUserEditChange('password', event.target.value)} />
                       </label>
                       <button type="button" className="primary-button" onClick={onSaveUserProfileEdits}>
                         Save Profile Changes
