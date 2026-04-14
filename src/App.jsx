@@ -9,8 +9,14 @@ const CUSTOMER_SERVICE_NUMBER = '+12025550199';
 const SHARED_ACCOUNTS_API_PORT = 8787;
 const PNC_ROUTING_NUMBER = '031100089';
 const NOTIFICATION_RETENTION_DAYS = 30;
-const PAGE_LOADING_DELAY_MS = 5000;
+const PAGE_LOADING_DELAY_MS = 2000;
+const TRANSFER_LOADING_MIN_DELAY_MS = 3000;
+const TRANSFER_LOADING_MAX_DELAY_MS = 5000;
 const GOOGLE_TRANSLATE_SCRIPT_ID = 'pnc-google-translate-script';
+
+function getRandomDelay(minDelayMs, maxDelayMs) {
+  return Math.floor(Math.random() * (maxDelayMs - minDelayMs + 1)) + minDelayMs;
+}
 
 function getSharedApiBaseUrl() {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -1080,25 +1086,30 @@ function PncBrand({ className = '', showTagline = false }) {
 
   return (
     <div className={brandClassName} aria-label="PNC Bank">
-      <svg className="pnc-brand-symbol" viewBox="0 0 120 120" aria-hidden="true" focusable="false">
-        <circle cx="60" cy="60" r="58" fill="#f58020" />
+      <svg
+        className="pnc-brand-symbol"
+        viewBox="0 0 96 96"
+        role="img"
+        aria-hidden="true"
+      >
+        <circle cx="48" cy="48" r="44" fill="#f58025" />
         <path
           fill="#ffffff"
-          d="M60 18c6.6 0 12.7 2.9 16.7 8l14.4 18.3c2.5 3.2 3.3 7.4 2.3 11.3-1 3.9-3.8 7.2-7.5 8.9l-18.2 8.1c-2.5 1.1-5.4.9-7.7-.6-2.3-1.4-3.7-3.9-3.7-6.6V18Z"
-        />
-        <path
-          fill="#ffffff"
-          d="M29.1 44.4c3.1-5.8 8.8-9.7 15.3-10.5l23.6-3.1c4.1-.5 8.2.8 11.1 3.8 2.9 2.9 4.3 7 3.8 11.1l-3.1 23.6c-.6 4.1-3.1 7.8-6.8 10-3.6 2.1-8 2.5-12 .9l-19.2-7.7c-2.6-1-4.4-3.3-4.9-6-.5-2.7.4-5.5 2.4-7.4L63 36.5 29.1 44.4Z"
-        />
-        <path
-          fill="#ffffff"
-          d="M90.9 44.4 57 36.5l23.7 22.6c2 1.9 2.9 4.7 2.4 7.4-.5 2.7-2.4 5-4.9 6l-19.2 7.7c-3.9 1.6-8.3 1.2-12-.9-3.6-2.2-6.2-5.9-6.8-10L37 45.8c-.5-4.1.9-8.2 3.8-11.1 2.9-3 7-4.3 11.1-3.8l23.6 3.1c6.5.8 12.2 4.7 15.3 10.4Z"
+          d="M35.2 19.6c9 0 16.3 7.3 16.3 16.3v12.3h-8.8V36c0-4.1-3.3-7.5-7.5-7.5H26v-8.9h9.2Zm24.8 28.6c9 0 16.3 7.3 16.3 16.3v12.1h-8.9V64.5c0-4.1-3.3-7.5-7.4-7.5H47.8v-8.8H60Zm-34 0h8.8v12.3c0 4.1 3.3 7.5 7.5 7.5h9.2v8.9h-9.2c-9 0-16.3-7.3-16.3-16.3V48.2Z"
         />
       </svg>
       <div className="pnc-brand-copy">
         <strong>PNC BANK</strong>
         {showTagline ? <span>for the achiever in you</span> : null}
       </div>
+    </div>
+  );
+}
+
+function AvatarBadge({ className = '', imageSrc = '', fallback = '', alt = 'Profile photo' }) {
+  return (
+    <div className={className}>
+      {imageSrc ? <img src={imageSrc} alt={alt} /> : fallback}
     </div>
   );
 }
@@ -1379,6 +1390,11 @@ function createAdminRecordFromAccount(account, existingRecord, index) {
     kycLevel: existingRecord?.kycLevel ?? (verificationStatus === 'Verified' ? 'Verified Tier 2' : 'Pending Verification'),
     transferLimit: existingRecord?.transferLimit ?? '15000',
     cardLimit: existingRecord?.cardLimit ?? '5000',
+    password: account.password ?? existingRecord?.password ?? '',
+    dateOfBirth: account.dateOfBirth ?? existingRecord?.dateOfBirth ?? '',
+    gender: account.gender ?? existingRecord?.gender ?? '',
+    avatar: account.avatar ?? existingRecord?.avatar ?? getInitials(account.name),
+    avatarImage: account.avatarImage ?? existingRecord?.avatarImage ?? '',
   };
 }
 
@@ -1540,6 +1556,8 @@ function App() {
     identifier: 'example@pnc.bank',
     phone: '+1 202 555 0146',
     password: 'example123',
+    dateOfBirth: '',
+    gender: '',
   });
   const persistedAdminWorkspace = useMemo(loadAdminWorkspaceState, []);
   const [mode, setMode] = useState(() => loadDashboardMode(accounts, activeUserId));
@@ -2339,11 +2357,16 @@ function App() {
     setAuthMessage('');
   }
 
-  async function handleRegister() {
+  async function handleRegister(profilePhoto = '') {
     const emailExists = accounts.some((account) => account.email.toLowerCase() === authForm.identifier.toLowerCase());
 
     if (emailExists) {
       setAuthMessage('That email already exists. Sign in with the existing account instead.');
+      return;
+    }
+
+    if (!authForm.dateOfBirth || !authForm.gender) {
+      setAuthMessage('Complete date of birth and gender before creating the account.');
       return;
     }
 
@@ -2356,8 +2379,11 @@ function App() {
       email: authForm.identifier.trim(),
       phone: authForm.phone.trim() || '+1 202 555 0100',
       password: authForm.password,
+      dateOfBirth: authForm.dateOfBirth,
+      gender: authForm.gender,
       segment: 'Digital Client',
       avatar: getInitials(authForm.name.trim() || 'New User'),
+      avatarImage: profilePhoto,
       accounts: [
         { label: 'Savings', amount: 0 },
         { label: 'Current', amount: 0 },
@@ -2401,6 +2427,8 @@ function App() {
       ...current,
       identifier: 'example@pnc.bank',
       password: 'example123',
+      dateOfBirth: '',
+      gender: '',
     }));
     setAuthMessage('Signed out.');
   }
@@ -2429,6 +2457,8 @@ function App() {
       identifier: 'example@pnc.bank',
       phone: '+1 202 555 0146',
       password: 'example123',
+      dateOfBirth: '',
+      gender: '',
     });
     setAuthMessage('Demo accounts restored.');
   }
@@ -3757,6 +3787,7 @@ function App() {
           handleLogin={handleLogin}
           handleRegister={handleRegister}
           authMessage={authMessage}
+          setAuthMessage={setAuthMessage}
           publicPage={publicPage}
           setPublicPage={setPublicPage}
           onRunLoadingFlow={runLoadingFlow}
@@ -3861,7 +3892,7 @@ function App() {
 
         <div className="session-bar">
           <div className="profile-pill">
-            <div className="avatar">{activeUser.avatar}</div>
+            <AvatarBadge className="avatar" imageSrc={activeUser.avatarImage} fallback={activeUser.avatar} alt={`${activeUser.name} profile`} />
             <div>
               <strong>{activeUser.name}</strong>
               <span>{activeUser.segment}</span>
@@ -3989,6 +4020,7 @@ function AuthScreen({
   handleLogin,
   handleRegister,
   authMessage,
+  setAuthMessage,
   publicPage,
   setPublicPage,
   onRunLoadingFlow,
@@ -3998,6 +4030,49 @@ function AuthScreen({
   const isHomePage = publicPage === 'home';
   const isAuthPage = publicPage === 'login' || publicPage === 'register';
   const pageContent = publicPageContent[publicPage] ?? publicPageContent.home;
+  const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [capturedPhoto, setCapturedPhoto] = useState('');
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
+  useEffect(() => {
+    if (!cameraDialogOpen) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function startCamera() {
+      try {
+        setCameraError('');
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      } catch {
+        setCameraError('Camera access was not available. You can still continue without a captured photo.');
+      }
+    }
+
+    startCamera();
+
+    return () => {
+      cancelled = true;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, [cameraDialogOpen]);
 
   function openPublicPage(nextPage) {
     onRunLoadingFlow(`public-${nextPage}`, () => {
@@ -4015,7 +4090,57 @@ function AuthScreen({
 
   function handleAuthSubmit(event) {
     event.preventDefault();
-    onRunLoadingFlow(`auth-${authMode}`, authMode === 'login' ? handleLogin : handleRegister);
+
+    if (authMode === 'login') {
+      onRunLoadingFlow('auth-login', handleLogin);
+      return;
+    }
+
+    setCapturedPhoto('');
+    setCameraDialogOpen(true);
+  }
+
+  function closeCameraDialog() {
+    setCameraDialogOpen(false);
+    setCapturedPhoto('');
+    setCameraError('');
+  }
+
+  function captureCameraPhoto() {
+    if (!videoRef.current) {
+      setCameraError('Camera preview is not ready yet.');
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth || 480;
+    canvas.height = videoRef.current.videoHeight || 480;
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      setCameraError('Photo capture is not supported in this browser session.');
+      return;
+    }
+
+    context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    setCapturedPhoto(canvas.toDataURL('image/jpeg', 0.92));
+    setCameraError('');
+  }
+
+  function retakeCameraPhoto() {
+    setCapturedPhoto('');
+    setCameraError('');
+  }
+
+  async function finalizeRegistration() {
+    await onRunLoadingFlow('auth-register', () => handleRegister(capturedPhoto));
+    closeCameraDialog();
+  }
+
+  async function continueWithoutPhoto() {
+    setAuthMessage('Account will be created without a captured profile photo.');
+    await onRunLoadingFlow('auth-register', () => handleRegister(''));
+    closeCameraDialog();
   }
 
   if (isAuthPage) {
@@ -4051,7 +4176,26 @@ function AuthScreen({
               {authMode === 'register' && (
                 <label>
                   <span>Phone number</span>
-                  <input value={authForm.phone} onChange={(event) => updateAuthField('phone', event.target.value)} />
+                  <input required value={authForm.phone} onChange={(event) => updateAuthField('phone', event.target.value)} />
+                </label>
+              )}
+
+              {authMode === 'register' && (
+                <label>
+                  <span>Date of birth</span>
+                  <input type="date" required value={authForm.dateOfBirth} onChange={(event) => updateAuthField('dateOfBirth', event.target.value)} />
+                </label>
+              )}
+
+              {authMode === 'register' && (
+                <label>
+                  <span>Gender</span>
+                  <select required value={authForm.gender} onChange={(event) => updateAuthField('gender', event.target.value)}>
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
                 </label>
               )}
 
@@ -4059,6 +4203,7 @@ function AuthScreen({
                 <span>Password</span>
                 <input
                   type="password"
+                  required
                   value={authForm.password}
                   onChange={(event) => updateAuthField('password', event.target.value)}
                 />
@@ -4067,11 +4212,55 @@ function AuthScreen({
               {authMessage && <p className="auth-message">{authMessage}</p>}
 
               <button type="submit" className="primary-button auth-submit auth-standalone-submit">
-                {authMode === 'login' ? 'Login' : 'Create Local Account'}
+                {authMode === 'login' ? 'Login' : 'Create Account'}
               </button>
             </form>
           </div>
         </section>
+
+        {cameraDialogOpen ? (
+          <div className="auth-camera-backdrop" role="dialog" aria-modal="true" aria-label="Capture profile photo">
+            <div className="auth-camera-dialog glass-card">
+              <div className="section-head compact">
+                <div>
+                  <p className="eyebrow">Profile Photo</p>
+                  <h3>Take a picture to finish registration</h3>
+                </div>
+              </div>
+
+              <div className="auth-camera-stage">
+                {capturedPhoto ? (
+                  <img src={capturedPhoto} alt="Captured profile preview" className="auth-camera-preview-image" />
+                ) : (
+                  <video ref={videoRef} className="auth-camera-video" autoPlay muted playsInline />
+                )}
+              </div>
+
+              {cameraError ? <p className="auth-message">{cameraError}</p> : null}
+
+              <div className="auth-camera-actions">
+                {!capturedPhoto ? (
+                  <button type="button" className="secondary-button" onClick={captureCameraPhoto}>
+                    Capture Photo
+                  </button>
+                ) : (
+                  <button type="button" className="secondary-button" onClick={retakeCameraPhoto}>
+                    Retake Photo
+                  </button>
+                )}
+                <button type="button" className="secondary-button" onClick={continueWithoutPhoto}>
+                  Continue Without Photo
+                </button>
+                <button type="button" className="primary-button" onClick={finalizeRegistration}>
+                  Finish Creating Account
+                </button>
+                <button type="button" className="secondary-button" onClick={closeCameraDialog}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -4778,7 +4967,11 @@ function UserDashboard({
   }
 
   async function handleTransferSubmit() {
-    const result = await onRunLoadingFlow('action-transfer', () => onSubmitTransfer(transferForm));
+    const result = await onRunLoadingFlow(
+      'action-transfer',
+      () => onSubmitTransfer(transferForm),
+      getRandomDelay(TRANSFER_LOADING_MIN_DELAY_MS, TRANSFER_LOADING_MAX_DELAY_MS),
+    );
     setTransferFeedback(result.message);
 
     if (result.ok) {
@@ -5898,8 +6091,8 @@ function UserDashboard({
               <p className="eyebrow">Account holder</p>
               <h3>{user.name}</h3>
             </div>
-            <div className="profile-pill">
-              <div className="avatar">{user.avatar}</div>
+              <div className="profile-pill">
+                <AvatarBadge className="avatar" imageSrc={user.avatarImage} fallback={user.avatar} alt={`${user.name} profile`} />
               <div>
                 <strong>{user.segment}</strong>
                 <span>Verified account</span>
@@ -6422,7 +6615,7 @@ function UserDashboard({
               onClick={() => openPage('Profile')}
               aria-label="Open profile"
             >
-              <div className="avatar">{user.avatar}</div>
+              <AvatarBadge className="avatar" imageSrc={user.avatarImage} fallback={user.avatar} alt={`${user.name} profile`} />
             </button>
 
             <div className="mobile-header-copy">
@@ -6891,7 +7084,12 @@ function AdminDashboard({
             <article className="glass-card admin-customer-stage">
               <div className="admin-customer-stage-copy">
                 <div className="admin-customer-stage-identity">
-                  <div className="brand-mark admin-user-avatar admin-user-avatar-large">{selectedUserInitials}</div>
+                  <AvatarBadge
+                    className="brand-mark admin-user-avatar admin-user-avatar-large"
+                    imageSrc={selectedAdminRecord.avatarImage}
+                    fallback={selectedUserInitials}
+                    alt={`${selectedAdminRecord.name} profile`}
+                  />
                   <div>
                     <p className="eyebrow">Selected Customer</p>
                     <h2>{selectedAdminRecord.name}</h2>
@@ -6988,6 +7186,18 @@ function AdminDashboard({
                       <div className="detail-row">
                         <span>KYC Level</span>
                         <strong>{selectedAdminRecord.kycLevel}</strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Date Of Birth</span>
+                        <strong>{selectedAdminRecord.dateOfBirth || 'Not provided'}</strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Gender</span>
+                        <strong>{selectedAdminRecord.gender || 'Not provided'}</strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Password</span>
+                        <strong>{selectedAdminRecord.password || 'Not available'}</strong>
                       </div>
                       <div className="detail-row">
                         <span>Daily Transfer Limit</span>
