@@ -113,7 +113,20 @@
     "pendingIncomingTransfers": [],
     "accountNumber": "1825631418",
     "routingNumber": "031100089",
-    "issuedCards": []
+    "issuedCards": [
+      {
+        "id": "CARD-SEED-USR-0001",
+        "requestId": "CARD-SEED-USR-0001",
+        "type": "Physical Debit Card - Generated",
+        "cardMode": "Physical Card",
+        "status": "Active",
+        "requested": "Apr 05, 2026",
+        "issuedAt": "2026-04-05T09:30:00.000Z",
+        "network": "Mastercard World",
+        "maskedNumber": "**** 8842",
+        "issuedBy": "PNC Demo Seed"
+      }
+    ]
   },
   {
     "id": "ADM-0001",
