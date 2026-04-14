@@ -1080,12 +1080,21 @@ function PncBrand({ className = '', showTagline = false }) {
 
   return (
     <div className={brandClassName} aria-label="PNC Bank">
-      <div className="pnc-brand-symbol" aria-hidden="true">
-        <span className="pnc-brand-symbol-orb" />
-        <span className="pnc-brand-symbol-wing is-top" />
-        <span className="pnc-brand-symbol-wing is-left" />
-        <span className="pnc-brand-symbol-wing is-right" />
-      </div>
+      <svg className="pnc-brand-symbol" viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+        <circle cx="60" cy="60" r="58" fill="#f58020" />
+        <path
+          fill="#ffffff"
+          d="M60 18c6.6 0 12.7 2.9 16.7 8l14.4 18.3c2.5 3.2 3.3 7.4 2.3 11.3-1 3.9-3.8 7.2-7.5 8.9l-18.2 8.1c-2.5 1.1-5.4.9-7.7-.6-2.3-1.4-3.7-3.9-3.7-6.6V18Z"
+        />
+        <path
+          fill="#ffffff"
+          d="M29.1 44.4c3.1-5.8 8.8-9.7 15.3-10.5l23.6-3.1c4.1-.5 8.2.8 11.1 3.8 2.9 2.9 4.3 7 3.8 11.1l-3.1 23.6c-.6 4.1-3.1 7.8-6.8 10-3.6 2.1-8 2.5-12 .9l-19.2-7.7c-2.6-1-4.4-3.3-4.9-6-.5-2.7.4-5.5 2.4-7.4L63 36.5 29.1 44.4Z"
+        />
+        <path
+          fill="#ffffff"
+          d="M90.9 44.4 57 36.5l23.7 22.6c2 1.9 2.9 4.7 2.4 7.4-.5 2.7-2.4 5-4.9 6l-19.2 7.7c-3.9 1.6-8.3 1.2-12-.9-3.6-2.2-6.2-5.9-6.8-10L37 45.8c-.5-4.1.9-8.2 3.8-11.1 2.9-3 7-4.3 11.1-3.8l23.6 3.1c6.5.8 12.2 4.7 15.3 10.4Z"
+        />
+      </svg>
       <div className="pnc-brand-copy">
         <strong>PNC BANK</strong>
         {showTagline ? <span>for the achiever in you</span> : null}
