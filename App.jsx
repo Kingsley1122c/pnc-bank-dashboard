@@ -9,8 +9,14 @@ const CUSTOMER_SERVICE_NUMBER = '+12025550199';
 const SHARED_ACCOUNTS_API_PORT = 8787;
 const PNC_ROUTING_NUMBER = '031100089';
 const NOTIFICATION_RETENTION_DAYS = 30;
-const PAGE_LOADING_DELAY_MS = 5000;
+const PAGE_LOADING_DELAY_MS = 2000;
+const TRANSFER_LOADING_MIN_DELAY_MS = 3000;
+const TRANSFER_LOADING_MAX_DELAY_MS = 5000;
 const GOOGLE_TRANSLATE_SCRIPT_ID = 'pnc-google-translate-script';
+
+function getRandomDelay(minDelayMs, maxDelayMs) {
+  return Math.floor(Math.random() * (maxDelayMs - minDelayMs + 1)) + minDelayMs;
+}
 
 function getSharedApiBaseUrl() {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -4961,7 +4967,11 @@ function UserDashboard({
   }
 
   async function handleTransferSubmit() {
-    const result = await onRunLoadingFlow('action-transfer', () => onSubmitTransfer(transferForm));
+    const result = await onRunLoadingFlow(
+      'action-transfer',
+      () => onSubmitTransfer(transferForm),
+      getRandomDelay(TRANSFER_LOADING_MIN_DELAY_MS, TRANSFER_LOADING_MAX_DELAY_MS),
+    );
     setTransferFeedback(result.message);
 
     if (result.ok) {
