@@ -1075,6 +1075,25 @@ function getInitials(name) {
     .toUpperCase();
 }
 
+function PncBrand({ className = '', showTagline = false }) {
+  const brandClassName = ['pnc-brand', className].filter(Boolean).join(' ');
+
+  return (
+    <div className={brandClassName} aria-label="PNC Bank">
+      <div className="pnc-brand-symbol" aria-hidden="true">
+        <span className="pnc-brand-symbol-orb" />
+        <span className="pnc-brand-symbol-wing is-top" />
+        <span className="pnc-brand-symbol-wing is-left" />
+        <span className="pnc-brand-symbol-wing is-right" />
+      </div>
+      <div className="pnc-brand-copy">
+        <strong>PNC BANK</strong>
+        {showTagline ? <span>for the achiever in you</span> : null}
+      </div>
+    </div>
+  );
+}
+
 function readStorage(key) {
   if (typeof window === 'undefined') {
     return null;
@@ -3814,9 +3833,12 @@ function App() {
       <div className="ambient ambient-right" />
 
       <header className="app-header glass-card">
-        <div>
-          <p className="eyebrow">PNC Bank</p>
-          <h1>Premium Digital Banking Control Center</h1>
+        <div className="app-header-brand">
+          <PncBrand className="app-brand" />
+          <div>
+            <p className="eyebrow">Operations Workspace</p>
+            <h1>Premium Digital Banking Control Center</h1>
+          </div>
         </div>
 
         <div className="mode-toggle" role="tablist" aria-label="Dashboard mode selector">
@@ -4060,10 +4082,7 @@ function AuthScreen({
         <div className="landing-grid" />
 
         <header className="landing-nav">
-          <div className="landing-logo">
-            <div className="landing-logo-mark">◢</div>
-            <strong>PNC BANK</strong>
-          </div>
+          <PncBrand className="landing-logo" />
 
           <nav className="landing-links">
             {landingNav.map((item) => (
@@ -4193,7 +4212,11 @@ function AuthScreen({
               </div>
             </div>
           ) : (
-            <div className="landing-image-spacer" aria-hidden="true" />
+            <div className="landing-image-spacer" aria-hidden="true">
+              <div className="landing-brand-badge">
+                <PncBrand className="pnc-brand-hero" showTagline />
+              </div>
+            </div>
           )}
         </div>
       </section>
@@ -4301,12 +4324,12 @@ function UserDashboard({
   const paymentTransactions = filteredTransactions.filter((entry) => ['Transfer', 'Bills'].includes(entry.type));
   const billTransactions = filteredTransactions.filter((entry) => entry.type === 'Bills');
   const activeUserCards = userCardRequests.filter((request) => request.status === 'Active');
-  const availableCardModes = Array.from(new Set(activeUserCards.map((request) => getCardModeFromRequestType(request.type)).filter(Boolean)));
+  const availableCardModes = Array.from(new Set(activeUserCards.map((request) => request.cardMode ?? getCardModeFromRequestType(request.type)).filter(Boolean)));
   const selectedCardMode = availableCardModes.includes(activeCardMode) ? activeCardMode : availableCardModes[0] ?? activeCardMode;
   const activeCardProduct = availableCardModes.includes(selectedCardMode) ? cardProductCatalog[selectedCardMode] : null;
   const latestCardRequest = userCardRequests[0] ?? null;
   const selectedCardRequest =
-    userCardRequests.find((request) => getCardModeFromRequestType(request.type) === selectedCardMode && request.status !== 'Rejected')
+    userCardRequests.find((request) => (request.cardMode ?? getCardModeFromRequestType(request.type)) === selectedCardMode && request.status !== 'Rejected')
     ?? latestCardRequest;
   const hasIssuedCard = Boolean(activeCardProduct);
   const unreadNotifications = userNotifications.filter((entry) => !entry.readAt);

@@ -323,6 +323,17 @@ body {
   margin-bottom: 24px;
 }
 
+.app-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.app-brand {
+  flex: 0 0 auto;
+}
+
 .session-bar {
   display: flex;
   align-items: center;
@@ -487,11 +498,92 @@ body {
   align-items: center;
   gap: 10px;
   color: #fff;
+  min-width: 0;
 }
 
 .landing-logo strong {
   font-size: 1.18rem;
   letter-spacing: 0.02em;
+}
+
+.pnc-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pnc-brand-symbol {
+  position: relative;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+}
+
+.pnc-brand-symbol-orb {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ff8d1a, #f05a00);
+  box-shadow: 0 10px 24px rgba(240, 90, 0, 0.22);
+}
+
+.pnc-brand-symbol-wing {
+  position: absolute;
+  background: #fff;
+  box-shadow: 0 3px 8px rgba(8, 19, 36, 0.12);
+}
+
+.pnc-brand-symbol-wing.is-top {
+  top: 8px;
+  left: 17px;
+  width: 12px;
+  height: 22px;
+  border-radius: 10px 10px 14px 14px;
+  clip-path: polygon(48% 0, 100% 18%, 76% 100%, 22% 100%, 0 18%);
+}
+
+.pnc-brand-symbol-wing.is-left {
+  left: 7px;
+  top: 15px;
+  width: 20px;
+  height: 16px;
+  border-radius: 14px;
+  clip-path: polygon(0 44%, 100% 0, 82% 100%, 10% 88%);
+  transform: rotate(-18deg);
+}
+
+.pnc-brand-symbol-wing.is-right {
+  right: 7px;
+  top: 15px;
+  width: 20px;
+  height: 16px;
+  border-radius: 14px;
+  clip-path: polygon(18% 0, 100% 44%, 90% 88%, 0 100%);
+  transform: rotate(18deg);
+}
+
+.pnc-brand-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pnc-brand-copy strong {
+  color: #0e67ad;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.22rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.pnc-brand-copy span {
+  color: #0e67ad;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 0.88rem;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .landing-logo-mark,
@@ -772,6 +864,36 @@ body {
   width: clamp(52px, 7vw, 72px);
   height: clamp(52px, 7vw, 72px);
   font-size: clamp(1.2rem, 2vw, 1.5rem);
+}
+
+.landing-brand-badge {
+  justify-self: end;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: clamp(20px, 6vw, 96px);
+}
+
+.pnc-brand-hero {
+  gap: 20px;
+  padding: 24px 28px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 28px 56px rgba(4, 10, 20, 0.28);
+}
+
+.pnc-brand-hero .pnc-brand-symbol {
+  width: 74px;
+  height: 74px;
+}
+
+.pnc-brand-hero .pnc-brand-copy strong {
+  font-size: clamp(2.2rem, 4vw, 3.8rem);
+}
+
+.pnc-brand-hero .pnc-brand-copy span {
+  font-size: clamp(1rem, 2vw, 1.6rem);
 }
 
 .auth-modal-shell {
@@ -3909,6 +4031,12 @@ th {
     flex-wrap: wrap;
   }
 
+  .app-header-brand,
+  .pnc-brand,
+  .pnc-brand-hero {
+    flex-wrap: wrap;
+  }
+
   .landing-links {
     order: 3;
     width: 100%;
@@ -3951,8 +4079,9 @@ th {
   }
 
   .landing-brand-badge {
-    font-size: clamp(2.4rem, 10vw, 4rem);
     padding-top: 16px;
+    padding-right: 0;
+    justify-self: start;
   }
 
   .landing-hero-home {
@@ -4105,8 +4234,27 @@ th {
     font-size: 1rem;
   }
 
+  .pnc-brand-copy strong {
+    font-size: 1rem;
+  }
+
+  .pnc-brand-copy span {
+    font-size: 0.74rem;
+  }
+
   .landing-brand-badge {
     gap: 10px;
+  }
+
+  .pnc-brand-hero {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 16px 18px;
+  }
+
+  .pnc-brand-hero .pnc-brand-symbol {
+    width: 56px;
+    height: 56px;
   }
 
   .about-page-card {
