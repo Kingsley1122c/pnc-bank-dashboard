@@ -16,6 +16,42 @@ const distDir = path.resolve(process.cwd(), 'dist');
 const eventClients = new Set();
 let mailTransporter = null;
 
+function getSeedIssuedCards(account) {
+  const existingIssuedCards = account.issuedCards ?? [];
+
+  if (existingIssuedCards.length > 0 || account.role === 'admin') {
+    return existingIssuedCards;
+  }
+
+  const isSeedExampleUser = account.id === 'USR-0001' || String(account.email ?? '').toLowerCase() === 'example@pnc.bank';
+
+  if (!isSeedExampleUser) {
+    return existingIssuedCards;
+  }
+
+  return [
+    {
+      id: 'CARD-SEED-USR-0001',
+      requestId: 'CARD-SEED-USR-0001',
+      type: 'Physical Debit Card - Generated',
+      cardMode: 'Physical Card',
+      status: 'Active',
+      requested: 'Apr 05, 2026',
+      issuedAt: '2026-04-05T09:30:00.000Z',
+      network: 'Mastercard World',
+      maskedNumber: '**** 8842',
+      issuedBy: 'PNC Demo Seed',
+    },
+  ];
+}
+
+function normalizeStoredAccount(account) {
+  return {
+    ...account,
+    issuedCards: getSeedIssuedCards(account),
+  };
+}
+
 function formatAccountNumber(accountNumber) {
   const cleaned = String(accountNumber ?? '').replace(/\D/g, '');
 
@@ -186,9 +222,9 @@ async function readAccounts() {
   try {
     const content = await readFile(accountsFile, 'utf8');
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : defaultAccounts;
+    return Array.isArray(parsed) ? parsed.map(normalizeStoredAccount) : defaultAccounts.map(normalizeStoredAccount);
   } catch {
-    return defaultAccounts;
+    return defaultAccounts.map(normalizeStoredAccount);
   }
 }
 
