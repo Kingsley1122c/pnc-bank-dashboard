@@ -5,7 +5,7 @@ const ACTIVE_USER_STORAGE_KEY = 'pnc-bank-active-user';
 const ADMIN_WORKSPACE_STORAGE_KEY = 'pnc-bank-admin-workspace';
 const DASHBOARD_MODE_STORAGE_KEY = 'pnc-bank-dashboard-mode';
 const LANGUAGE_STORAGE_KEY = 'pnc-bank-language';
-const CUSTOMER_SERVICE_NUMBER = '+12025550199';
+const CUSTOMER_SERVICE_NUMBER = '(+12344533439)';
 const SHARED_ACCOUNTS_API_PORT = 8787;
 const PNC_ROUTING_NUMBER = '031100089';
 const NOTIFICATION_RETENTION_DAYS = 30;
@@ -1002,6 +1002,18 @@ function slugifyReceiptSegment(value) {
     .replace(/^-+|-+$/g, '') || 'confirmation';
 }
 
+function getWhatsAppContactHref(phoneNumber, message = '') {
+  const normalizedNumber = String(phoneNumber ?? '').replace(/\D/g, '');
+
+  if (!normalizedNumber) {
+    return '#';
+  }
+
+  return message
+    ? `https://wa.me/${normalizedNumber}?text=${encodeURIComponent(message)}`
+    : `https://wa.me/${normalizedNumber}`;
+}
+
 function buildConfirmationExportText({ eyebrow, title, message, auditLabel, createdAt, details = [], nextStep }) {
   const lines = [
     'PNC BANK CONFIRMATION',
@@ -1033,6 +1045,153 @@ function downloadTextDocument(filename, content) {
   link.click();
   window.URL.revokeObjectURL(href);
   return true;
+}
+
+function downloadBlobDocument(filename, blob) {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !blob) {
+    return false;
+  }
+
+  const href = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = filename;
+  link.click();
+  window.URL.revokeObjectURL(href);
+  return true;
+}
+
+function wrapCanvasText(context, text, maxWidth) {
+  const words = String(text ?? '').split(/\s+/).filter(Boolean);
+
+  if (words.length === 0) {
+    return [''];
+  }
+
+  const lines = [];
+  let currentLine = words[0];
+
+  for (let index = 1; index < words.length; index += 1) {
+    const nextLine = `${currentLine} ${words[index]}`;
+
+    if (context.measureText(nextLine).width <= maxWidth) {
+      currentLine = nextLine;
+    } else {
+      lines.push(currentLine);
+      currentLine = words[index];
+    }
+  }
+
+  lines.push(currentLine);
+  return lines;
+}
+
+async function createReceiptImageBlob({ receipt, customerName }) {
+  if (typeof document === 'undefined' || !receipt) {
+    return null;
+  }
+
+  const canvas = document.createElement('canvas');
+  const width = 1400;
+  const height = 1760;
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    return null;
+  }
+
+  const gradient = context.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, '#08111f');
+  gradient.addColorStop(0.6, '#0a1a32');
+  gradient.addColorStop(1, '#13284a');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, width, height);
+
+  context.fillStyle = 'rgba(255, 255, 255, 0.08)';
+  for (let index = 0; index < 10; index += 1) {
+    const offset = 120 + (index * 120);
+    context.fillRect(offset, 0, 2, height);
+    context.fillRect(0, offset, width, 2);
+  }
+
+  const cardX = 90;
+  const cardY = 90;
+  const cardWidth = width - 180;
+  const cardHeight = height - 180;
+  const radius = 38;
+
+  context.beginPath();
+  context.moveTo(cardX + radius, cardY);
+  context.lineTo(cardX + cardWidth - radius, cardY);
+  context.quadraticCurveTo(cardX + cardWidth, cardY, cardX + cardWidth, cardY + radius);
+  context.lineTo(cardX + cardWidth, cardY + cardHeight - radius);
+  context.quadraticCurveTo(cardX + cardWidth, cardY + cardHeight, cardX + cardWidth - radius, cardY + cardHeight);
+  context.lineTo(cardX + radius, cardY + cardHeight);
+  context.quadraticCurveTo(cardX, cardY + cardHeight, cardX, cardY + cardHeight - radius);
+  context.lineTo(cardX, cardY + radius);
+  context.quadraticCurveTo(cardX, cardY, cardX + radius, cardY);
+  context.closePath();
+  context.fillStyle = '#f7fafc';
+  context.fill();
+
+  const headerGradient = context.createLinearGradient(cardX, cardY, cardX + cardWidth, cardY + 260);
+  headerGradient.addColorStop(0, '#0e67ad');
+  headerGradient.addColorStop(1, '#1b86c8');
+  context.fillStyle = headerGradient;
+  context.fillRect(cardX, cardY, cardWidth, 260);
+
+  context.fillStyle = '#ffffff';
+  context.font = '700 74px Georgia';
+  context.fillText('PNC BANK', cardX + 70, cardY + 108);
+  context.font = '500 34px Segoe UI';
+  context.fillText('Transfer Receipt', cardX + 70, cardY + 164);
+  context.font = '500 28px Segoe UI';
+  context.fillStyle = 'rgba(255, 255, 255, 0.84)';
+  context.fillText(`Generated for ${customerName}`, cardX + 70, cardY + 214);
+
+  const detailEntries = [
+    ['Reference', receipt.id],
+    ['Beneficiary', receipt.name],
+    ['Type', receipt.type],
+    ['Amount', receipt.amount],
+    ['Date', receipt.date],
+    ['Status', receipt.status],
+    ...(receipt.destination ? [['Destination', receipt.destination]] : []),
+    ...(receipt.note ? [['Note', receipt.note]] : []),
+  ];
+
+  let rowY = cardY + 340;
+  detailEntries.forEach(([label, value]) => {
+    context.fillStyle = '#6b7d93';
+    context.font = '600 24px Segoe UI';
+    context.fillText(String(label).toUpperCase(), cardX + 70, rowY);
+
+    context.fillStyle = label === 'Amount' ? (String(value).startsWith('+') ? '#0c9b79' : '#d1495b') : '#10263d';
+    context.font = label === 'Amount' ? '700 42px Segoe UI' : '600 38px Segoe UI';
+    const wrappedLines = wrapCanvasText(context, String(value ?? ''), cardWidth - 140);
+    let lineY = rowY + 54;
+    wrappedLines.forEach((line) => {
+      context.fillText(line, cardX + 70, lineY);
+      lineY += label === 'Amount' ? 52 : 46;
+    });
+
+    rowY = lineY + 30;
+    context.fillStyle = 'rgba(16, 38, 61, 0.08)';
+    context.fillRect(cardX + 70, rowY - 6, cardWidth - 140, 2);
+    rowY += 34;
+  });
+
+  context.fillStyle = '#35506c';
+  context.font = '500 26px Segoe UI';
+  context.fillText(`WhatsApp customer service: ${CUSTOMER_SERVICE_NUMBER}`, cardX + 70, cardY + cardHeight - 120);
+  context.fillText('This receipt can be shared as proof of payment.', cardX + 70, cardY + cardHeight - 72);
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/png');
+  });
 }
 
 function normalizeNotificationEntry(entry) {
@@ -4388,6 +4547,9 @@ function AuthScreen({
                   <button type="button" className="landing-cta-secondary" onClick={() => openPublicPage('about')}>
                     Learn More <span>›</span>
                   </button>
+                  <a className="landing-cta-support" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
+                    WhatsApp Customer Service
+                  </a>
                 </div>
               </>
             )}
@@ -4598,9 +4760,8 @@ function UserDashboard({
           note: withdrawalForm.message.trim(),
         })
       : '');
-  const customerServiceHref = supportRequestMessage
-    ? `sms:${customerServiceNumber}?body=${encodeURIComponent(supportRequestMessage)}`
-    : `tel:${customerServiceNumber}`;
+  const customerServiceHref = getWhatsAppContactHref(customerServiceNumber, supportRequestMessage);
+  const generalCustomerServiceHref = getWhatsAppContactHref(customerServiceNumber, 'Hello PNC customer service, I need help with my account.');
 
   function getActionResultExportLabel(result) {
     if (result.kind === 'withdrawal') {
@@ -4680,33 +4841,59 @@ function UserDashboard({
     );
   }
 
-  async function handleCopySelectedReceipt() {
+  async function handleShareSelectedReceiptImage() {
     if (!selectedReceipt) {
       return;
     }
 
-    const payload = buildSelectedReceiptExportPayload(selectedReceipt);
+    const receiptBlob = await createReceiptImageBlob({ receipt: selectedReceipt, customerName: user.name });
+
+    if (!receiptBlob) {
+      setActionUtilityFeedback('Unable to generate a receipt image from the current browser session.');
+      return;
+    }
+
+    const filename = `pnc-${slugifyReceiptSegment(selectedReceipt.type)}-${slugifyReceiptSegment(selectedReceipt.id)}.png`;
 
     try {
-      if (!navigator?.clipboard?.writeText) {
-        throw new Error('Clipboard unavailable');
+      const receiptFile = new File([receiptBlob], filename, { type: 'image/png' });
+
+      if (navigator?.share && navigator?.canShare?.({ files: [receiptFile] })) {
+        await navigator.share({
+          files: [receiptFile],
+          title: 'PNC receipt image',
+          text: `Receipt ${selectedReceipt.id} for ${selectedReceipt.amount}`,
+        });
+        setActionUtilityFeedback('Receipt image shared successfully.');
+        return;
       }
 
-      await navigator.clipboard.writeText(payload.content);
-      setActionUtilityFeedback('Receipt copied. You can now share it anywhere.');
+      const downloaded = downloadBlobDocument(filename, receiptBlob);
+      setActionUtilityFeedback(
+        downloaded
+          ? 'Sharing is not available here, so the receipt image was downloaded instead.'
+          : 'Unable to share this receipt image from the current browser session.',
+      );
     } catch {
-      setActionUtilityFeedback('Unable to copy this receipt from the current browser session.');
+      setActionUtilityFeedback('Receipt sharing was cancelled or is not available in this browser.');
     }
   }
 
-  function handleDownloadSelectedReceipt() {
+  async function handleDownloadSelectedReceiptImage() {
     if (!selectedReceipt) {
       return;
     }
 
-    const payload = buildSelectedReceiptExportPayload(selectedReceipt);
-    const downloaded = downloadTextDocument(payload.filename, payload.content);
-    setActionUtilityFeedback(downloaded ? 'Receipt downloaded successfully.' : 'Unable to download this receipt from the current browser session.');
+    const receiptBlob = await createReceiptImageBlob({ receipt: selectedReceipt, customerName: user.name });
+
+    if (!receiptBlob) {
+      setActionUtilityFeedback('Unable to generate a receipt image from the current browser session.');
+      return;
+    }
+
+    const filename = `pnc-${slugifyReceiptSegment(selectedReceipt.type)}-${slugifyReceiptSegment(selectedReceipt.id)}.png`;
+    const downloaded = downloadBlobDocument(filename, receiptBlob);
+    setActionUtilityFeedback(downloaded ? 'Receipt image downloaded successfully.' : 'Unable to download this receipt image from the current browser session.');
   }
 
   function renderActionResultCard(result) {
@@ -5768,8 +5955,8 @@ function UserDashboard({
           ) : null}
 
           <div className="mobile-request-actions">
-            <a className="primary-button withdrawal-service-link" href={customerServiceHref}>
-              Customer Service {customerServiceNumber}
+            <a className="primary-button withdrawal-service-link" href={customerServiceHref} target="_blank" rel="noreferrer">
+              WhatsApp Customer Service {customerServiceNumber}
             </a>
             <button type="button" className="secondary-button" onClick={() => openPage('Support')}>
               Open support page
@@ -5981,8 +6168,8 @@ function UserDashboard({
               <p className="eyebrow">New case</p>
               <h3>Tell us what you need</h3>
             </div>
-            <a className="secondary-button profile-link-button" href={`tel:${customerServiceNumber}`}>
-              Call support
+            <a className="secondary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
+              Chat on WhatsApp
             </a>
           </div>
 
@@ -6168,6 +6355,20 @@ function UserDashboard({
             <button type="button" className="secondary-button" onClick={() => openPage('Security')}>Security Center</button>
             <button type="button" className="primary-button" onClick={onLogout}>Logout</button>
           </div>
+        </article>
+
+        <article className="mobile-card-section glass-card mobile-tab-panel profile-service-card">
+          <div className="mobile-section-head">
+            <div>
+              <p className="eyebrow">Customer Service</p>
+              <h3>WhatsApp only support line</h3>
+            </div>
+          </div>
+
+          <p className="muted-copy">Reach PNC customer service directly on WhatsApp for account help and service questions.</p>
+          <a className="primary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
+            WhatsApp {customerServiceNumber}
+          </a>
         </article>
       </section>
     );
@@ -6454,49 +6655,63 @@ function UserDashboard({
 
           {receipt ? (
             <>
-              <div className="detail-row">
-                <span>Reference</span>
-                <strong>{receipt.id}</strong>
-              </div>
-              <div className="detail-row">
-                <span>Beneficiary</span>
-                <strong>{receipt.name}</strong>
-              </div>
-              <div className="detail-row">
-                <span>Type</span>
-                <strong>{receipt.type}</strong>
-              </div>
-              <div className="detail-row">
-                <span>Amount</span>
-                <strong className={receipt.amount.startsWith('+') ? 'amount-positive' : 'amount-negative'}>{receipt.amount}</strong>
-              </div>
-              <div className="detail-row">
-                <span>Date</span>
-                <strong>{receipt.date}</strong>
-              </div>
-              <div className="detail-row">
-                <span>Status</span>
-                <strong>{receipt.status}</strong>
-              </div>
-              {receipt.destination ? (
-                <div className="detail-row">
-                  <span>Destination</span>
-                  <strong>{receipt.destination}</strong>
+              <div className="receipt-image-preview">
+                <div className="receipt-image-preview-head">
+                  <div>
+                    <p className="eyebrow">PNC Bank</p>
+                    <h3>Receipt Image Preview</h3>
+                  </div>
+                  <span className={`status-pill ${String(receipt.status).toLowerCase().replace(/\s+/g, '-')}`}>{receipt.status}</span>
                 </div>
-              ) : null}
-              {receipt.note ? (
-                <div className="detail-row">
-                  <span>Note</span>
-                  <strong>{receipt.note}</strong>
+
+                <div className="receipt-image-preview-grid">
+                  <div className="detail-row">
+                    <span>Reference</span>
+                    <strong>{receipt.id}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Beneficiary</span>
+                    <strong>{receipt.name}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Type</span>
+                    <strong>{receipt.type}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Amount</span>
+                    <strong className={receipt.amount.startsWith('+') ? 'amount-positive' : 'amount-negative'}>{receipt.amount}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Date</span>
+                    <strong>{receipt.date}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Status</span>
+                    <strong>{receipt.status}</strong>
+                  </div>
+                  {receipt.destination ? (
+                    <div className="detail-row">
+                      <span>Destination</span>
+                      <strong>{receipt.destination}</strong>
+                    </div>
+                  ) : null}
+                  {receipt.note ? (
+                    <div className="detail-row">
+                      <span>Note</span>
+                      <strong>{receipt.note}</strong>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
+
+                <p className="receipt-image-preview-foot">Share this receipt as an image or download it as a PNG file.</p>
+              </div>
 
               <div className="mobile-receipt-actions">
-                <button type="button" className="secondary-button" onClick={handleCopySelectedReceipt}>
-                  Copy Receipt
+                <button type="button" className="secondary-button" onClick={handleShareSelectedReceiptImage}>
+                  Share Receipt Image
                 </button>
-                <button type="button" className="primary-button" onClick={handleDownloadSelectedReceipt}>
-                  Download Receipt
+                <button type="button" className="primary-button" onClick={handleDownloadSelectedReceiptImage}>
+                  Download PNG
                 </button>
                 <button type="button" className="secondary-button" onClick={() => openPage(receipt.type === 'Bills' ? 'Bill Pay' : 'Transfers')}>
                   Back to {receipt.type === 'Bills' ? 'Bill Pay' : 'Transfers'}
