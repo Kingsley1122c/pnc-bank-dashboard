@@ -4205,6 +4205,10 @@ function AuthScreen({
   const isHomePage = publicPage === 'home';
   const isAuthPage = publicPage === 'login' || publicPage === 'register';
   const pageContent = publicPageContent[publicPage] ?? publicPageContent.home;
+  const generalCustomerServiceHref = getWhatsAppContactHref(
+    CUSTOMER_SERVICE_NUMBER,
+    'Hello PNC customer service, I need help with my account.',
+  );
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [capturedPhoto, setCapturedPhoto] = useState('');
