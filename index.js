@@ -1,139 +1,6 @@
-async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toAccount, transferDate }) {
-  const mailer = getSendGridClient();
-  if (!mailer) {
-    return {
-      ok: false,
-      configured: false,
-      message: 'SendGrid is not configured on the server.',
-    };
-  }
-  const subject = 'You have received a transfer';
-  const text = [
-    `Hello ${name},`,
-    '',
-    `You have received a transfer of $${amount} to your account (${toAccount}).`,
-    fromAccount ? `From: ${fromAccount}` : '',
-    transferDate ? `Date: ${transferDate}` : '',
-    '',
-    'If you have any questions, contact customer support.',
-    '',
-    'PNC Bank',
-  ].filter(Boolean).join('\n');
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
-      <h2 style="margin-bottom: 12px;">You have received a transfer</h2>
-      <p>Hello ${name},</p>
-      <p>You have received a transfer of <strong>$${amount}</strong> to your account (<strong>${toAccount}</strong>).</p>
-      ${fromAccount ? `<p><strong>From:</strong> ${fromAccount}</p>` : ''}
-      ${transferDate ? `<p><strong>Date:</strong> ${transferDate}</p>` : ''}
-      <p>If you have any questions, contact customer support.</p>
-      <p style="margin-top: 24px;">PNC Bank</p>
-    </div>
-  `;
-  await mailer.sgMail.send({
-    to: email,
-    from: mailer.from,
-    subject,
-    text,
-    html,
-  });
-  return {
-    ok: true,
-    configured: true,
-    message: `Transfer received email sent to ${email}.`,
-  };
-}
-
-async function sendImportantMessageEmail({ name, email, subject, message }) {
-  const mailer = getSendGridClient();
-  if (!mailer) {
-    return {
-      ok: false,
-      configured: false,
-      message: 'SendGrid is not configured on the server.',
-    };
-  }
-  const emailSubject = subject || 'Important message from PNC Bank';
-  const text = [
-    `Hello ${name},`,
-    '',
-    message,
-    '',
-    'If you have any questions, contact customer support.',
-    '',
-    'PNC Bank',
-  ].join('\n');
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
-      <h2 style="margin-bottom: 12px;">${emailSubject}</h2>
-      <p>Hello ${name},</p>
-      <p>${message}</p>
-      <p>If you have any questions, contact customer support.</p>
-      <p style="margin-top: 24px;">PNC Bank</p>
-    </div>
-  `;
-  await mailer.sgMail.send({
-    to: email,
-    from: mailer.from,
-    subject: emailSubject,
-    text,
-    html,
-  });
-  return {
-    ok: true,
-    configured: true,
-    message: `Important message email sent to ${email}.`,
-  };
-}
-// API endpoint to send transfer received email
-app.post('/api/emails/transfer-received', async (request, response) => {
-  const { name, email, amount, fromAccount, toAccount, transferDate } = request.body ?? {};
-  if (!name || !email || !amount || !toAccount) {
-    response.status(400).json({ ok: false, message: 'Name, email, amount, and toAccount are required.' });
-    return;
-  }
-  try {
-    const result = await sendTransferReceivedEmail({ name, email, amount, fromAccount, toAccount, transferDate });
-    if (!result.ok && result.configured === false) {
-      response.status(503).json(result);
-      return;
-    }
-    response.json(result);
-  } catch (error) {
-    response.status(500).json({
-      ok: false,
-      configured: true,
-      message: error instanceof Error ? error.message : 'Failed to send transfer received email.',
-    });
-  }
-});
-
-// API endpoint to send important message email
-app.post('/api/emails/important-message', async (request, response) => {
-  const { name, email, subject, message } = request.body ?? {};
-  if (!name || !email || !message) {
-    response.status(400).json({ ok: false, message: 'Name, email, and message are required.' });
-    return;
-  }
-  try {
-    const result = await sendImportantMessageEmail({ name, email, subject, message });
-    if (!result.ok && result.configured === false) {
-      response.status(503).json(result);
-      return;
-    }
-    response.json(result);
-  } catch (error) {
-    response.status(500).json({
-      ok: false,
-      configured: true,
-      message: error instanceof Error ? error.message : 'Failed to send important message email.',
-    });
-  }
-});
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import sgMail from '@sendgrid/mail';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -146,6 +13,8 @@ const accountsFile = path.join(dataDir, 'accounts.json');
 const adminWorkspaceFile = path.join(dataDir, 'admin-workspace.json');
 const distDir = path.resolve(process.cwd(), 'dist');
 const eventClients = new Set();
+let nodemailerPromise;
+let sendGridMailPromise;
 
 
 function getSeedIssuedCards(account) {
@@ -195,27 +64,127 @@ function formatAccountNumber(accountNumber) {
 }
 
 
+function getEmailFromAddress() {
+  return process.env.EMAIL_FROM?.trim() || 'no-reply@pnc.bank';
+}
+
+function getSmtpConfig() {
+  const host = process.env.SMTP_HOST?.trim();
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+
+  if (!host || !user || !pass) {
+    return null;
+  }
+
+  return {
+    host,
+    port: Number(process.env.SMTP_PORT ?? 587),
+    secure: String(process.env.SMTP_SECURE ?? 'false').toLowerCase() === 'true',
+    user,
+    pass,
+    from: getEmailFromAddress(),
+  };
+}
+
 function getSendGridConfig() {
   const apiKey = process.env.SENDGRID_API_KEY?.trim();
-  const from = process.env.EMAIL_FROM?.trim() || 'no-reply@pnc.bank';
+  const from = getEmailFromAddress();
   if (!apiKey) return null;
   return { apiKey, from };
 }
 
-function getSendGridClient() {
+async function getNodemailer() {
+  if (!nodemailerPromise) {
+    nodemailerPromise = import('nodemailer')
+      .then((module) => module.default ?? module)
+      .catch((error) => {
+        if (error?.code === 'ERR_MODULE_NOT_FOUND') {
+          return null;
+        }
+
+        throw error;
+      });
+  }
+
+  return nodemailerPromise;
+}
+
+async function getSendGridMail() {
+  if (!sendGridMailPromise) {
+    sendGridMailPromise = import('@sendgrid/mail')
+      .then((module) => module.default ?? module)
+      .catch((error) => {
+        if (error?.code === 'ERR_MODULE_NOT_FOUND') {
+          return null;
+        }
+
+        throw error;
+      });
+  }
+
+  return sendGridMailPromise;
+}
+
+async function getSendGridClient() {
   const config = getSendGridConfig();
   if (!config) return null;
+
+  const sgMail = await getSendGridMail();
+  if (!sgMail) return null;
+
   sgMail.setApiKey(config.apiKey);
   return { sgMail, from: config.from };
 }
 
+async function getMailClient() {
+  const smtpConfig = getSmtpConfig();
+
+  if (smtpConfig) {
+    const nodemailer = await getNodemailer();
+
+    if (nodemailer) {
+      const transporter = nodemailer.createTransport({
+        host: smtpConfig.host,
+        port: smtpConfig.port,
+        secure: smtpConfig.secure,
+        auth: {
+          user: smtpConfig.user,
+          pass: smtpConfig.pass,
+        },
+      });
+
+      return {
+        from: smtpConfig.from,
+        send: (message) => transporter.sendMail({
+          from: smtpConfig.from,
+          ...message,
+        }),
+      };
+    }
+  }
+
+  const sendGridClient = await getSendGridClient();
+  if (!sendGridClient) {
+    return null;
+  }
+
+  return {
+    from: sendGridClient.from,
+    send: (message) => sendGridClient.sgMail.send({
+      from: sendGridClient.from,
+      ...message,
+    }),
+  };
+}
+
 async function sendWelcomeEmail({ name, email, accountNumber }) {
-  const mailer = getSendGridClient();
+  const mailer = await getMailClient();
   if (!mailer) {
     return {
       ok: false,
       configured: false,
-      message: 'SendGrid is not configured on the server.',
+      message: 'Email provider is not configured on the server.',
     };
   }
   const formattedAccountNumber = formatAccountNumber(accountNumber);
@@ -243,9 +212,8 @@ async function sendWelcomeEmail({ name, email, accountNumber }) {
       <p style="margin-top: 24px;">PNC Bank</p>
     </div>
   `;
-  await mailer.sgMail.send({
+  await mailer.send({
     to: email,
-    from: mailer.from,
     subject,
     text,
     html,
@@ -254,6 +222,92 @@ async function sendWelcomeEmail({ name, email, accountNumber }) {
     ok: true,
     configured: true,
     message: `Welcome email sent to ${email}.`,
+  };
+}
+
+async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toAccount, transferDate }) {
+  const mailer = await getMailClient();
+  if (!mailer) {
+    return {
+      ok: false,
+      configured: false,
+      message: 'Email provider is not configured on the server.',
+    };
+  }
+  const subject = 'You have received a transfer';
+  const text = [
+    `Hello ${name},`,
+    '',
+    `You have received a transfer of $${amount} to your account (${toAccount}).`,
+    fromAccount ? `From: ${fromAccount}` : '',
+    transferDate ? `Date: ${transferDate}` : '',
+    '',
+    'If you have any questions, contact customer support.',
+    '',
+    'PNC Bank',
+  ].filter(Boolean).join('\n');
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
+      <h2 style="margin-bottom: 12px;">You have received a transfer</h2>
+      <p>Hello ${name},</p>
+      <p>You have received a transfer of <strong>$${amount}</strong> to your account (<strong>${toAccount}</strong>).</p>
+      ${fromAccount ? `<p><strong>From:</strong> ${fromAccount}</p>` : ''}
+      ${transferDate ? `<p><strong>Date:</strong> ${transferDate}</p>` : ''}
+      <p>If you have any questions, contact customer support.</p>
+      <p style="margin-top: 24px;">PNC Bank</p>
+    </div>
+  `;
+  await mailer.send({
+    to: email,
+    subject,
+    text,
+    html,
+  });
+  return {
+    ok: true,
+    configured: true,
+    message: `Transfer received email sent to ${email}.`,
+  };
+}
+
+async function sendImportantMessageEmail({ name, email, subject, message }) {
+  const mailer = await getMailClient();
+  if (!mailer) {
+    return {
+      ok: false,
+      configured: false,
+      message: 'Email provider is not configured on the server.',
+    };
+  }
+  const emailSubject = subject || 'Important message from PNC Bank';
+  const text = [
+    `Hello ${name},`,
+    '',
+    message,
+    '',
+    'If you have any questions, contact customer support.',
+    '',
+    'PNC Bank',
+  ].join('\n');
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
+      <h2 style="margin-bottom: 12px;">${emailSubject}</h2>
+      <p>Hello ${name},</p>
+      <p>${message}</p>
+      <p>If you have any questions, contact customer support.</p>
+      <p style="margin-top: 24px;">PNC Bank</p>
+    </div>
+  `;
+  await mailer.send({
+    to: email,
+    subject: emailSubject,
+    text,
+    html,
+  });
+  return {
+    ok: true,
+    configured: true,
+    message: `Important message email sent to ${email}.`,
   };
 }
 
@@ -412,6 +466,58 @@ app.post('/api/emails/welcome', async (request, response) => {
       ok: false,
       configured: true,
       message: error instanceof Error ? error.message : 'Failed to send welcome email.',
+    });
+  }
+});
+
+app.post('/api/emails/transfer-received', async (request, response) => {
+  const { name, email, amount, fromAccount, toAccount, transferDate } = request.body ?? {};
+
+  if (!name || !email || !amount || !toAccount) {
+    response.status(400).json({ ok: false, message: 'Name, email, amount, and toAccount are required.' });
+    return;
+  }
+
+  try {
+    const result = await sendTransferReceivedEmail({ name, email, amount, fromAccount, toAccount, transferDate });
+
+    if (!result.ok && result.configured === false) {
+      response.status(503).json(result);
+      return;
+    }
+
+    response.json(result);
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      configured: true,
+      message: error instanceof Error ? error.message : 'Failed to send transfer received email.',
+    });
+  }
+});
+
+app.post('/api/emails/important-message', async (request, response) => {
+  const { name, email, subject, message } = request.body ?? {};
+
+  if (!name || !email || !message) {
+    response.status(400).json({ ok: false, message: 'Name, email, and message are required.' });
+    return;
+  }
+
+  try {
+    const result = await sendImportantMessageEmail({ name, email, subject, message });
+
+    if (!result.ok && result.configured === false) {
+      response.status(503).json(result);
+      return;
+    }
+
+    response.json(result);
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      configured: true,
+      message: error instanceof Error ? error.message : 'Failed to send important message email.',
     });
   }
 });
