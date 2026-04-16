@@ -16,7 +16,6 @@ const eventClients = new Set();
 let nodemailerPromise;
 let sendGridMailPromise;
 
-
 function getSeedIssuedCards(account) {
   const existingIssuedCards = account.issuedCards ?? [];
 
@@ -62,7 +61,6 @@ function formatAccountNumber(accountNumber) {
 
   return `${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)} ${cleaned.slice(6)}`;
 }
-
 
 function getEmailFromAddress() {
   return process.env.EMAIL_FROM?.trim() || 'no-reply@pnc.bank';
@@ -187,6 +185,7 @@ async function sendWelcomeEmail({ name, email, accountNumber }) {
       message: 'Email provider is not configured on the server.',
     };
   }
+
   const formattedAccountNumber = formatAccountNumber(accountNumber);
   const subject = 'Welcome to PNC Bank';
   const text = [
@@ -201,6 +200,7 @@ async function sendWelcomeEmail({ name, email, accountNumber }) {
     '',
     'PNC Bank',
   ].join('\n');
+
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
       <h2 style="margin-bottom: 12px;">Welcome to PNC Bank</h2>
@@ -212,12 +212,14 @@ async function sendWelcomeEmail({ name, email, accountNumber }) {
       <p style="margin-top: 24px;">PNC Bank</p>
     </div>
   `;
+
   await mailer.send({
     to: email,
     subject,
     text,
     html,
   });
+
   return {
     ok: true,
     configured: true,
@@ -234,6 +236,7 @@ async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toA
       message: 'Email provider is not configured on the server.',
     };
   }
+
   const subject = 'You have received a transfer';
   const text = [
     `Hello ${name},`,
@@ -246,6 +249,7 @@ async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toA
     '',
     'PNC Bank',
   ].filter(Boolean).join('\n');
+
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
       <h2 style="margin-bottom: 12px;">You have received a transfer</h2>
@@ -257,12 +261,14 @@ async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toA
       <p style="margin-top: 24px;">PNC Bank</p>
     </div>
   `;
+
   await mailer.send({
     to: email,
     subject,
     text,
     html,
   });
+
   return {
     ok: true,
     configured: true,
@@ -279,6 +285,7 @@ async function sendImportantMessageEmail({ name, email, subject, message }) {
       message: 'Email provider is not configured on the server.',
     };
   }
+
   const emailSubject = subject || 'Important message from PNC Bank';
   const text = [
     `Hello ${name},`,
@@ -289,6 +296,7 @@ async function sendImportantMessageEmail({ name, email, subject, message }) {
     '',
     'PNC Bank',
   ].join('\n');
+
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
       <h2 style="margin-bottom: 12px;">${emailSubject}</h2>
@@ -298,12 +306,14 @@ async function sendImportantMessageEmail({ name, email, subject, message }) {
       <p style="margin-top: 24px;">PNC Bank</p>
     </div>
   `;
+
   await mailer.send({
     to: email,
     subject: emailSubject,
     text,
     html,
   });
+
   return {
     ok: true,
     configured: true,
