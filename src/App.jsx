@@ -5,7 +5,7 @@ const ACTIVE_USER_STORAGE_KEY = 'pnc-bank-active-user';
 const ADMIN_WORKSPACE_STORAGE_KEY = 'pnc-bank-admin-workspace';
 const DASHBOARD_MODE_STORAGE_KEY = 'pnc-bank-dashboard-mode';
 const LANGUAGE_STORAGE_KEY = 'pnc-bank-language';
-const CUSTOMER_SERVICE_NUMBER = '(+12344533439)';
+const CUSTOMER_SERVICE_EMAIL = 'pncbank.org@gmail.com';
 const SHARED_ACCOUNTS_API_PORT = 8787;
 const PNC_ROUTING_NUMBER = '031100089';
 const NOTIFICATION_RETENTION_DAYS = 30;
@@ -1002,16 +1002,19 @@ function slugifyReceiptSegment(value) {
     .replace(/^-+|-+$/g, '') || 'confirmation';
 }
 
-function getWhatsAppContactHref(phoneNumber, message = '') {
-  const normalizedNumber = String(phoneNumber ?? '').replace(/\D/g, '');
+function getSupportEmailHref(emailAddress, message = '') {
+  const normalizedEmail = String(emailAddress ?? '').trim();
 
-  if (!normalizedNumber) {
+  if (!normalizedEmail) {
     return '#';
   }
 
-  return message
-    ? `https://wa.me/${normalizedNumber}?text=${encodeURIComponent(message)}`
-    : `https://wa.me/${normalizedNumber}`;
+  const query = [
+    `subject=${encodeURIComponent('PNC Customer Support')}`,
+    message ? `body=${encodeURIComponent(message)}` : '',
+  ].filter(Boolean).join('&');
+
+  return query ? `mailto:${normalizedEmail}?${query}` : `mailto:${normalizedEmail}`;
 }
 
 function buildConfirmationExportText({ eyebrow, title, message, auditLabel, createdAt, details = [], nextStep }) {
@@ -1186,7 +1189,7 @@ async function createReceiptImageBlob({ receipt, customerName }) {
 
   context.fillStyle = '#35506c';
   context.font = '500 26px Segoe UI';
-  context.fillText(`WhatsApp customer service: ${CUSTOMER_SERVICE_NUMBER}`, cardX + 70, cardY + cardHeight - 120);
+  context.fillText(`Customer service email: ${CUSTOMER_SERVICE_EMAIL}`, cardX + 70, cardY + cardHeight - 120);
   context.fillText('This receipt can be shared as proof of payment.', cardX + 70, cardY + cardHeight - 72);
 
   return new Promise((resolve) => {
@@ -1301,6 +1304,10 @@ function getWelcomeEmailApiUrl() {
   return `${getSharedApiBaseUrl()}/api/emails/welcome`;
 }
 
+function getImportantMessageEmailApiUrl() {
+  return `${getSharedApiBaseUrl()}/api/emails/important-message`;
+}
+
 async function fetchRemoteAccounts() {
   const response = await fetch(getSharedAccountsApiUrl());
 
@@ -1379,6 +1386,40 @@ async function requestWelcomeEmail({ name, email, accountNumber }) {
       ok: true,
       configured: true,
       message: payload.message ?? `Welcome email sent to ${email}.`,
+    };
+  } catch {
+    return {
+      ok: false,
+      configured: false,
+      message: 'Email service is unavailable right now.',
+    };
+  }
+}
+
+async function requestImportantMessageEmail({ name, email, subject, message }) {
+  try {
+    const response = await fetch(getImportantMessageEmailApiUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name, email, subject, message }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        configured: payload.configured ?? true,
+        message: payload.message ?? 'Unable to send important message email right now.',
+      };
+    }
+
+    return {
+      ok: true,
+      configured: true,
+      message: payload.message ?? `Important message email sent to ${email}.`,
     };
   } catch {
     return {
@@ -2695,20 +2736,26 @@ function App() {
       return { ok: false, message: 'Transfers are only available for signed-in retail users.' };
     }
 
-    const recipient = transferForm.recipient.trim();
-    const bankName = transferForm.bankName.trim();
     const cleanedAccountNumber = transferForm.accountNumber.replace(/\D/g, '');
     const amountValue = Number(transferForm.amount);
+
+    if (cleanedAccountNumber.length !== 10) {
+      return { ok: false, message: 'Enter a valid 10-digit registered PNC account number.' };
+    }
+
     const pncRecipient = accounts.find(
-      (account) => account.role !== 'admin' && account.id !== activeUser.id && account.accountNumber === cleanedAccountNumber,
+      (account) =>
+        account.role !== 'admin'
+        && account.id !== activeUser.id
+        && String(account.accountNumber ?? '').replace(/\D/g, '') === cleanedAccountNumber,
     );
     const recipientVerified = pncRecipient ? pncRecipient.verificationStatus === 'Verified' : true;
-    const resolvedRecipient = pncRecipient?.name ?? recipient;
-    const resolvedBankName = pncRecipient ? 'PNC Bank' : bankName;
 
-    if (!resolvedRecipient || !resolvedBankName || cleanedAccountNumber.length < 6) {
-      return { ok: false, message: 'Enter a recipient or valid PNC account number and bank details.' };
+    if (!pncRecipient) {
+      return { ok: false, message: 'Transfer failed. Only registered PNC account numbers are allowed.' };
     }
+
+    const resolvedRecipient = pncRecipient.name;
 
     const debitResult = debitActiveUserAccount(transferForm.sourceAccount, amountValue);
 
@@ -2726,7 +2773,7 @@ function App() {
       status: pncRecipient && !recipientVerified ? 'Pending Verification' : 'Completed',
       owner: activeUser.name,
       reviewStatus: pncRecipient && !recipientVerified ? 'Pending Review' : amountValue >= 5000 ? 'Pending Review' : 'Monitored',
-      destination: `${resolvedBankName} • **** ${cleanedAccountNumber.slice(-4)}`,
+      destination: `PNC Bank • **** ${cleanedAccountNumber.slice(-4)}`,
       note: transferForm.note.trim(),
     };
 
@@ -3098,7 +3145,7 @@ function App() {
     setAnnouncementComposerOpen(false);
   }
 
-  function handleAdminAnnouncement() {
+  async function handleAdminAnnouncement() {
     const issuedAt = new Date().toISOString();
     const audience = announcementDraft.audience.trim() || 'All retail users';
     const announcement = {
@@ -3110,6 +3157,19 @@ function App() {
       createdAt: issuedAt,
     };
     const normalizedAudience = audience.toLowerCase();
+    const targetedUsers = accounts.filter((account) => {
+      if (account.role === 'admin') {
+        return false;
+      }
+
+      const matchesSpecificAudience = [account.name, account.email, account.id, account.accountNumber ?? '']
+        .some((value) => String(value).toLowerCase() === normalizedAudience);
+
+      return normalizedAudience === 'all retail users'
+        || normalizedAudience === 'all users'
+        || normalizedAudience === 'all customers'
+        || matchesSpecificAudience;
+    });
 
     setAdminNotificationRecords((current) => [announcement, ...current].slice(0, 6));
     setAccounts((current) =>
@@ -3147,9 +3207,33 @@ function App() {
         };
       }),
     );
+    const emailTargets = targetedUsers.filter((account) => account.email);
+    const emailResults = await Promise.all(
+      emailTargets.map((account) =>
+        requestImportantMessageEmail({
+          name: account.name,
+          email: account.email,
+          subject: announcement.title,
+          message: announcement.title,
+        }),
+      ),
+    );
+    const emailSuccessCount = emailResults.filter((entry) => entry.ok).length;
+    const emailFailureCount = emailResults.length - emailSuccessCount;
+    const emailNotConfigured = emailResults.some((entry) => entry.configured === false);
+
     setAnnouncementDraft((current) => ({ ...current, title: '' }));
-    setAdminNotice(`Announcement queued for ${audience}.`);
-    pushAdminActivity(`${activeUser?.name ?? 'Admin'} queued a new announcement for ${audience}.`, { promoteToLiveFeed: true });
+    const emailStatus = emailTargets.length === 0
+      ? ' No recipient email addresses were available.'
+      : emailFailureCount === 0
+        ? ` Email delivered to ${emailSuccessCount} recipient${emailSuccessCount === 1 ? '' : 's'}.`
+        : ` Email delivered to ${emailSuccessCount} of ${emailTargets.length} recipient${emailTargets.length === 1 ? '' : 's'}.`;
+    const configStatus = emailNotConfigured ? ' Email service is not configured on the server.' : '';
+    setAdminNotice(`Announcement queued for ${audience}.${emailStatus}${configStatus}`);
+    pushAdminActivity(
+      `${activeUser?.name ?? 'Admin'} queued a new announcement for ${audience} and emailed ${emailSuccessCount}/${emailTargets.length} recipients.`,
+      { promoteToLiveFeed: true },
+    );
     setAnnouncementComposerOpen(false);
   }
 
@@ -3985,7 +4069,7 @@ function App() {
           user={activeUser}
           accounts={accounts}
           canAccessAdmin={activeUser.role === 'admin'}
-          customerServiceNumber={CUSTOMER_SERVICE_NUMBER}
+          customerServiceEmail={CUSTOMER_SERVICE_EMAIL}
           totalBalance={totalBalance}
           showBalance={showBalance}
           setShowBalance={setShowBalance}
@@ -4205,8 +4289,8 @@ function AuthScreen({
   const isHomePage = publicPage === 'home';
   const isAuthPage = publicPage === 'login' || publicPage === 'register';
   const pageContent = publicPageContent[publicPage] ?? publicPageContent.home;
-  const generalCustomerServiceHref = getWhatsAppContactHref(
-    CUSTOMER_SERVICE_NUMBER,
+  const generalCustomerServiceHref = getSupportEmailHref(
+    CUSTOMER_SERVICE_EMAIL,
     'Hello PNC customer service, I need help with my account.',
   );
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
@@ -4552,7 +4636,7 @@ function AuthScreen({
                     Learn More <span>›</span>
                   </button>
                   <a className="landing-cta-support" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
-                    WhatsApp Customer Service
+                    Email Customer Service
                   </a>
                 </div>
               </>
@@ -4620,7 +4704,7 @@ function UserDashboard({
   user,
   accounts,
   canAccessAdmin,
-  customerServiceNumber,
+  customerServiceEmail,
   totalBalance,
   showBalance,
   setShowBalance,
@@ -4764,8 +4848,8 @@ function UserDashboard({
           note: withdrawalForm.message.trim(),
         })
       : '');
-  const customerServiceHref = getWhatsAppContactHref(customerServiceNumber, supportRequestMessage);
-  const generalCustomerServiceHref = getWhatsAppContactHref(customerServiceNumber, 'Hello PNC customer service, I need help with my account.');
+  const customerServiceHref = getSupportEmailHref(customerServiceEmail, supportRequestMessage);
+  const generalCustomerServiceHref = getSupportEmailHref(customerServiceEmail, 'Hello PNC customer service, I need help with my account.');
 
   function getActionResultExportLabel(result) {
     if (result.kind === 'withdrawal') {
@@ -5630,7 +5714,7 @@ function UserDashboard({
         {renderPageHeader({
           eyebrow: 'Transfers',
           title: 'Send money',
-          description: 'Create a bank transfer and open receipts from the same workspace.',
+          description: 'Create a PNC transfer and open receipts from the same workspace.',
           backPage: 'Dashboard',
         })}
 
@@ -5638,7 +5722,7 @@ function UserDashboard({
           <div className="mobile-section-head">
             <div>
               <p className="eyebrow">Transfer form</p>
-              <h3>Send to another bank or PNC user</h3>
+              <h3>Send to a registered PNC user</h3>
             </div>
             <button type="button" className="secondary-button compact-button" onClick={() => openPage('Bill Pay')}>
               Pay a bill
@@ -5652,13 +5736,14 @@ function UserDashboard({
             </label>
             <label className="mobile-inline-field">
               <span>Bank name</span>
-              <input value={transferForm.bankName} placeholder="Use PNC Bank for internal transfer" onChange={(event) => setTransferForm((current) => ({ ...current, bankName: event.target.value }))} />
+              <input value={transferForm.bankName} placeholder="PNC-only transfer (optional field)" onChange={(event) => setTransferForm((current) => ({ ...current, bankName: event.target.value }))} />
             </label>
             <label className="mobile-inline-field">
               <span>Account number</span>
-              <input value={transferForm.accountNumber} placeholder="Enter 10-digit PNC or bank account number" onChange={(event) => setTransferForm((current) => ({ ...current, accountNumber: event.target.value }))} />
+              <input value={transferForm.accountNumber} placeholder="Enter 10-digit registered PNC account number" onChange={(event) => setTransferForm((current) => ({ ...current, accountNumber: event.target.value }))} />
               {matchedPncRecipient ? <small className="transfer-recipient-hint">PNC recipient: {matchedPncRecipient.name}</small> : null}
               {!matchedPncRecipient && isOwnTransferAccountNumber ? <small className="transfer-recipient-hint">This is your own PNC account number.</small> : null}
+              {!matchedPncRecipient && !isOwnTransferAccountNumber && cleanedTransferAccountNumber.length === 10 ? <small className="transfer-recipient-hint">No registered PNC recipient found for this account number.</small> : null}
             </label>
             <label className="mobile-inline-field">
               <span>Amount</span>
@@ -5960,7 +6045,7 @@ function UserDashboard({
 
           <div className="mobile-request-actions">
             <a className="primary-button withdrawal-service-link" href={customerServiceHref} target="_blank" rel="noreferrer">
-              WhatsApp Customer Service {customerServiceNumber}
+              Email Customer Service {customerServiceEmail}
             </a>
             <button type="button" className="secondary-button" onClick={() => openPage('Support')}>
               Open support page
@@ -6173,7 +6258,7 @@ function UserDashboard({
               <h3>Tell us what you need</h3>
             </div>
             <a className="secondary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
-              Chat on WhatsApp
+              Email Support
             </a>
           </div>
 
@@ -6365,13 +6450,13 @@ function UserDashboard({
           <div className="mobile-section-head">
             <div>
               <p className="eyebrow">Customer Service</p>
-              <h3>WhatsApp only support line</h3>
+              <h3>Email-only support contact</h3>
             </div>
           </div>
 
-          <p className="muted-copy">Reach PNC customer service directly on WhatsApp for account help and service questions.</p>
+          <p className="muted-copy">Reach PNC customer service by email for account help and service questions.</p>
           <a className="primary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
-            WhatsApp {customerServiceNumber}
+            {customerServiceEmail}
           </a>
         </article>
       </section>
