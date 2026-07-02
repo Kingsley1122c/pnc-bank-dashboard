@@ -3169,6 +3169,51 @@ function App() {
     }
   }
 
+  async function notifyUserAccountMessage({ accountId, title, message, emailSubject, emailMessage }) {
+    if (!accountId) {
+      return null;
+    }
+
+    const recipient = accounts.find((account) => account.id === accountId && account.role !== 'admin');
+
+    if (!recipient) {
+      return null;
+    }
+
+    setAccounts((current) =>
+      current.map((account) => {
+        if (account.id !== recipient.id) {
+          return account;
+        }
+
+        return {
+          ...account,
+          notifications: [
+            normalizeNotificationEntry({
+              id: `NOTICE-ADMIN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              type: 'admin-message',
+              title,
+              message,
+              createdAt: new Date().toISOString(),
+            }),
+            ...(account.notifications ?? []).map(normalizeNotificationEntry),
+          ],
+        };
+      }),
+    );
+
+    if (recipient.email) {
+      await requestImportantMessageEmail({
+        name: recipient.name,
+        email: recipient.email,
+        subject: emailSubject,
+        message: emailMessage,
+      });
+    }
+
+    return recipient;
+  }
+
   async function handleWithdrawalCodeSubmission(requestId, enteredCode) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Only signed-in users can submit withdrawal codes.' };
@@ -3806,6 +3851,14 @@ function App() {
     pushAdminActivity(`${activeUser?.name ?? 'Admin'} added ${formatCurrency(amountValue)} to ${selectedAdminRecord.name}.`, {
       promoteToLiveFeed: true,
     });
+
+    void notifyUserAccountMessage({
+      accountId: selectedAdminRecord.accountId,
+      title: 'Account funded',
+      message: `${activeUser?.name ?? 'Admin'} added ${formatCurrency(amountValue)} to your ${targetLabel} account${note ? ` with note: ${note}` : '.'}`,
+      emailSubject: `Account funded: ${formatCurrency(amountValue)}`,
+      emailMessage: `${activeUser?.name ?? 'Admin'} added ${formatCurrency(amountValue)} to your ${targetLabel} account${note ? ` with note: ${note}` : '.'}`,
+    });
   }
 
   function handleSaveUserLimits() {
@@ -4014,6 +4067,18 @@ function App() {
       pushAdminActivity(`${activeUser?.name ?? 'Admin'} verified ${targetRecord.name}.${releasedTransfers.length > 0 ? ` Released ${releasedTransfers.length} held transfer(s).` : ''}`, {
         promoteToLiveFeed: true,
       });
+
+      void notifyUserAccountMessage({
+        accountId: targetRecord.accountId,
+        title: 'Account verification complete',
+        message: releasedTransfers.length > 0
+          ? `Your account verification is complete. ${releasedTransfers.length} held incoming transfer(s) have been released to your account.`
+          : 'Your account verification is complete and your account is now fully verified.',
+        emailSubject: 'Account verification complete',
+        emailMessage: releasedTransfers.length > 0
+          ? `Your account verification is complete. ${releasedTransfers.length} held incoming transfer(s) have been released to your account.`
+          : 'Your account verification is complete and your account is now fully verified.',
+      });
       return;
     }
 
@@ -4053,6 +4118,14 @@ function App() {
     setAdminNotice(`${targetRecord.name} is now ${nextStatus}.`);
     pushAdminActivity(`${activeUser?.name ?? 'Admin'} changed ${targetRecord.name} to ${nextStatus}.`, {
       promoteToLiveFeed: action !== 'activate',
+    });
+
+    void notifyUserAccountMessage({
+      accountId: targetRecord.accountId,
+      title: `Account ${nextStatus.toLowerCase()}`,
+      message: `Your account status is now ${nextStatus}. Please contact support if you need a review.`,
+      emailSubject: `Account ${nextStatus.toLowerCase()}`,
+      emailMessage: `Your account status is now ${nextStatus}. Please contact support if you need a review.`,
     });
   }
 
@@ -4110,7 +4183,7 @@ function App() {
     });
   }
 
-  function handleCardGeneration(requestId) {
+  async function handleCardGeneration(requestId) {
     let updatedRequest = null;
 
     setAdminCardRecords((current) =>
@@ -4169,6 +4242,14 @@ function App() {
 
     setAdminNotice(`${updatedRequest.id} has been generated and activated.`);
     pushAdminActivity(`${activeUser?.name ?? 'Admin'} generated card request ${updatedRequest.id}.`, { promoteToLiveFeed: true });
+
+    await notifyUserAccountMessage({
+      accountId: updatedRequest.requesterId,
+      title: 'Debit card ready',
+      message: `Your ${issuedCard.cardMode.toLowerCase()} has been generated and is now active on your dashboard.`,
+      emailSubject: 'Debit card ready',
+      emailMessage: `Your ${issuedCard.cardMode.toLowerCase()} has been generated and is now active on your dashboard.`,
+    });
   }
 
   function handleTransactionAction(transactionId, action) {
