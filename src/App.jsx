@@ -3804,16 +3804,6 @@ function App() {
               ? { ...entry, amount: Number((entry.amount + amountValue).toFixed(2)) }
               : entry,
           ),
-          notifications: [
-            normalizeNotificationEntry({
-              id: `NOTICE-${transactionId}`,
-              type: 'admin-credit',
-              title: 'Account funded',
-              message: `${activeUser?.name ?? 'Admin'} added ${formatCurrency(amountValue)} to your ${targetLabel} account${note ? ` with note: ${note}` : '.'}`,
-              createdAt,
-            }),
-            ...(account.notifications ?? []).map(normalizeNotificationEntry),
-          ],
         };
       }),
     );
