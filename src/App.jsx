@@ -2742,6 +2742,29 @@ function App() {
     return { ok: true, sourceLabel: selectedAccount.label };
   }
 
+  function getPrimaryAccountLabel(account) {
+    return account.accounts.some((entry) => entry.label === 'Current')
+      ? 'Current'
+      : account.accounts[0]?.label;
+  }
+
+  function applyAccountBalanceDelta(account, amountDelta) {
+    const targetLabel = getPrimaryAccountLabel(account);
+
+    if (!targetLabel) {
+      return account;
+    }
+
+    return {
+      ...account,
+      accounts: account.accounts.map((entry) =>
+        entry.label === targetLabel
+          ? { ...entry, amount: Number((entry.amount + amountDelta).toFixed(2)) }
+          : entry,
+      ),
+    };
+  }
+
   function handleSubmitTransfer(transferForm) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Transfers are only available for signed-in retail users.' };
@@ -3167,9 +3190,10 @@ function App() {
         message: emailMessage,
       });
     }
+
   }
 
-  async function notifyUserAccountMessage({ accountId, title, message, emailSubject, emailMessage }) {
+  async function notifyUserAccountMessage({ accountId, title, message }) {
     if (!accountId) {
       return null;
     }
@@ -3206,8 +3230,8 @@ function App() {
       await requestImportantMessageEmail({
         name: recipient.name,
         email: recipient.email,
-        subject: emailSubject,
-        message: emailMessage,
+        subject: title,
+        message,
       });
     }
 
@@ -3317,7 +3341,7 @@ function App() {
     });
 
     if (!options.silent) {
-      setAdminNotice(`Code for ${targetRequest.id} was sent to ${recipient.name} via notification and email.`);
+      setAdminNotice(`Code for ${targetRequest.id} was sent to ${recipient.name} inside the bank.`);
       pushAdminActivity(`${activeUser?.name ?? 'Admin'} sent withdrawal code for ${targetRequest.id} to ${recipient.name}.`, {
         promoteToLiveFeed: true,
       });
@@ -3517,8 +3541,9 @@ function App() {
         };
       }),
     );
+
     const emailTargets = targetedUsers.filter((account) => account.email);
-    const emailResults = await Promise.all(
+    await Promise.all(
       emailTargets.map((account) =>
         requestImportantMessageEmail({
           name: account.name,
@@ -3528,20 +3553,11 @@ function App() {
         }),
       ),
     );
-    const emailSuccessCount = emailResults.filter((entry) => entry.ok).length;
-    const emailFailureCount = emailResults.length - emailSuccessCount;
-    const emailNotConfigured = emailResults.some((entry) => entry.configured === false);
 
     setAnnouncementDraft((current) => ({ ...current, title: '' }));
-    const emailStatus = emailTargets.length === 0
-      ? ' No recipient email addresses were available.'
-      : emailFailureCount === 0
-        ? ` Email delivered to ${emailSuccessCount} recipient${emailSuccessCount === 1 ? '' : 's'}.`
-        : ` Email delivered to ${emailSuccessCount} of ${emailTargets.length} recipient${emailTargets.length === 1 ? '' : 's'}.`;
-    const configStatus = emailNotConfigured ? ' Email service is not configured on the server.' : '';
-    setAdminNotice(`Announcement queued for ${audience}.${emailStatus}${configStatus}`);
+    setAdminNotice(`Announcement queued for ${audience} and delivered inside the bank.`);
     pushAdminActivity(
-      `${activeUser?.name ?? 'Admin'} queued a new announcement for ${audience} and emailed ${emailSuccessCount}/${emailTargets.length} recipients.`,
+      `${activeUser?.name ?? 'Admin'} queued a new announcement for ${audience}.`,
       { promoteToLiveFeed: true },
     );
     setAnnouncementComposerOpen(false);
@@ -3852,13 +3868,6 @@ function App() {
       promoteToLiveFeed: true,
     });
 
-    void notifyUserAccountMessage({
-      accountId: selectedAdminRecord.accountId,
-      title: 'Account funded',
-      message: `${activeUser?.name ?? 'Admin'} added ${formatCurrency(amountValue)} to your ${targetLabel} account${note ? ` with note: ${note}` : '.'}`,
-      emailSubject: `Account funded: ${formatCurrency(amountValue)}`,
-      emailMessage: `${activeUser?.name ?? 'Admin'} added ${formatCurrency(amountValue)} to your ${targetLabel} account${note ? ` with note: ${note}` : '.'}`,
-    });
   }
 
   function handleSaveUserLimits() {
@@ -4168,8 +4177,7 @@ function App() {
     );
 
     if (decision === 'approve') {
-      await handleSendWithdrawalCode(updatedRequest.id, { silent: true });
-      setAdminNotice(`${updatedRequest.id} approved and code issued to user via notification and email.`);
+      setAdminNotice(`${updatedRequest.id} approved. Copy the code if you want to send it inside the bank.`);
       return;
     }
 
@@ -4272,6 +4280,72 @@ function App() {
 
     if (!updatedTransaction) {
       return;
+    }
+
+    if (action === 'flag' && updatedTransaction.type === 'Transfer') {
+      const amountValue = Number(String(updatedTransaction.amount ?? '').replace(/[^\d.-]/g, ''));
+      const absoluteAmount = Math.abs(amountValue);
+      const ownerName = updatedTransaction.owner;
+      const counterpartyName = updatedTransaction.name;
+
+      if (Number.isFinite(amountValue) && amountValue !== 0) {
+        setAccounts((current) =>
+          current.map((account) => {
+            if (account.role === 'admin') {
+              return account;
+            }
+
+            if (account.name === ownerName) {
+              const restoredAccount = amountValue < 0
+                ? applyAccountBalanceDelta(account, absoluteAmount)
+                : applyAccountBalanceDelta(account, -absoluteAmount);
+
+              return {
+                ...restoredAccount,
+                notifications: [
+                  normalizeNotificationEntry({
+                    id: `NOTICE-REFUND-${updatedTransaction.id}-${Date.now()}`,
+                    type: 'transfer-refund',
+                    title: 'Refund processed',
+                    message: `A refund of ${formatCurrency(absoluteAmount)} has been returned to your account.`,
+                    createdAt: new Date().toISOString(),
+                  }),
+                  ...(account.notifications ?? []).map(normalizeNotificationEntry),
+                ],
+              };
+            }
+
+            if (account.name !== counterpartyName) {
+              return account;
+            }
+
+            const hasPendingHold = (account.pendingIncomingTransfers ?? []).some((entry) => entry.transactionId === updatedTransaction.id);
+
+            if (hasPendingHold) {
+              return {
+                ...account,
+                pendingIncomingTransfers: (account.pendingIncomingTransfers ?? []).filter((entry) => entry.transactionId !== updatedTransaction.id),
+              };
+            }
+
+            return applyAccountBalanceDelta(account, amountValue > 0 ? absoluteAmount : -absoluteAmount);
+          }),
+        );
+
+        setAdminTransactionRecords((current) =>
+          current.map((entry) =>
+            entry.id === updatedTransaction.id
+              ? { ...entry, reviewStatus: 'Resolved', status: 'Refunded' }
+              : entry,
+          ),
+        );
+
+        setAdminNotice(`${updatedTransaction.id} refunded back to the customer account.`);
+        pushAdminActivity(`${activeUser?.name ?? 'Admin'} reversed transfer ${updatedTransaction.id}.`, {
+          promoteToLiveFeed: true,
+        });
+        return;
+      }
     }
 
     setAdminNotice(`${updatedTransaction.id} marked as ${updatedTransaction.reviewStatus}.`);
