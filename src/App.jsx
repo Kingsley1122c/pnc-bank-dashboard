@@ -737,7 +737,7 @@ function getSeedIssuedCards(account) {
       issuedAt: '2026-04-05T09:30:00.000Z',
       network: seededProduct.network,
       maskedNumber: `**** ${seededProduct.number.replace(/\D/g, '').slice(-4)}`,
-      issuedBy: 'PNC Demo Seed',
+      issuedBy: 'PNC Account Services',
     },
   ];
 }
@@ -1309,8 +1309,58 @@ function getImportantMessageEmailApiUrl() {
   return `${getSharedApiBaseUrl()}/api/emails/important-message`;
 }
 
+function getAuthApiUrl(path) {
+  return `${getSharedApiBaseUrl()}/api/auth/${path}`;
+}
+
+async function readApiPayload(response) {
+  return response.json().catch(() => ({}));
+}
+
+async function requestLogin({ identifier, password }) {
+  const response = await fetch(getAuthApiUrl('login'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier, password }),
+  });
+  const payload = await readApiPayload(response);
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? 'Unable to sign in right now.');
+  }
+
+  return payload;
+}
+
+async function requestRegistration(profile) {
+  const response = await fetch(getAuthApiUrl('register'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profile),
+  });
+  const payload = await readApiPayload(response);
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? 'Unable to create the account right now.');
+  }
+
+  return payload;
+}
+
+async function fetchAuthSession() {
+  const response = await fetch(getAuthApiUrl('session'), { credentials: 'include' });
+  if (!response.ok) return null;
+  return readApiPayload(response);
+}
+
+async function requestLogout() {
+  await fetch(getAuthApiUrl('logout'), { method: 'POST', credentials: 'include' }).catch(() => null);
+}
+
 async function fetchRemoteAccounts() {
-  const response = await fetch(getSharedAccountsApiUrl());
+  const response = await fetch(getSharedAccountsApiUrl(), { credentials: 'include' });
 
   if (!response.ok) {
     throw new Error('Failed to fetch shared accounts.');
@@ -1323,6 +1373,7 @@ async function fetchRemoteAccounts() {
 async function saveRemoteAccounts(accounts) {
   const response = await fetch(getSharedAccountsApiUrl(), {
     method: 'PUT',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -1337,7 +1388,7 @@ async function saveRemoteAccounts(accounts) {
 }
 
 async function fetchRemoteAdminWorkspace() {
-  const response = await fetch(getSharedAdminWorkspaceApiUrl());
+  const response = await fetch(getSharedAdminWorkspaceApiUrl(), { credentials: 'include' });
 
   if (!response.ok) {
     throw new Error('Failed to fetch shared admin workspace.');
@@ -1350,6 +1401,7 @@ async function fetchRemoteAdminWorkspace() {
 async function saveRemoteAdminWorkspace(workspace) {
   const response = await fetch(getSharedAdminWorkspaceApiUrl(), {
     method: 'PUT',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -1367,6 +1419,7 @@ async function requestWelcomeEmail({ name, email, accountNumber }) {
   try {
     const response = await fetch(getWelcomeEmailApiUrl(), {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -1401,6 +1454,7 @@ async function requestImportantMessageEmail({ name, email, subject, message }) {
   try {
     const response = await fetch(getImportantMessageEmailApiUrl(), {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -1432,19 +1486,20 @@ async function requestImportantMessageEmail({ name, email, subject, message }) {
 }
 
 function normalizeAccountDefaults(account) {
-  const isAdminAccount = account.role === 'admin';
+  const { password: _password, passwordHash: _passwordHash, ...safeAccount } = account;
+  const isAdminAccount = safeAccount.role === 'admin';
   const accountNumber = isAdminAccount
-    ? account.accountNumber ?? ''
-    : account.accountNumber ?? generatePncAccountNumber(account.id || account.email || account.phone || account.name);
+    ? safeAccount.accountNumber ?? ''
+    : safeAccount.accountNumber ?? generatePncAccountNumber(safeAccount.id || safeAccount.email || safeAccount.phone || safeAccount.name);
 
   return {
-    ...account,
-    status: account.status ?? 'Active',
-    verificationStatus: account.verificationStatus ?? (isAdminAccount ? 'Verified' : 'Verified'),
-    savedBanks: account.savedBanks ?? [],
-    notifications: (account.notifications ?? []).map(normalizeNotificationEntry),
-    issuedCards: getSeedIssuedCards(account),
-    pendingIncomingTransfers: account.pendingIncomingTransfers ?? [],
+    ...safeAccount,
+    status: safeAccount.status ?? 'Active',
+    verificationStatus: safeAccount.verificationStatus ?? (isAdminAccount ? 'Verified' : 'Verified'),
+    savedBanks: safeAccount.savedBanks ?? [],
+    notifications: (safeAccount.notifications ?? []).map(normalizeNotificationEntry),
+    issuedCards: getSeedIssuedCards(safeAccount),
+    pendingIncomingTransfers: safeAccount.pendingIncomingTransfers ?? [],
     accountNumber,
     routingNumber: isAdminAccount ? account.routingNumber ?? '' : account.routingNumber ?? PNC_ROUTING_NUMBER,
   };
@@ -1600,7 +1655,6 @@ function createAdminRecordFromAccount(account, existingRecord, index) {
     kycLevel: existingRecord?.kycLevel ?? (verificationStatus === 'Verified' ? 'Verified Tier 2' : 'Pending Verification'),
     transferLimit: existingRecord?.transferLimit ?? '15000',
     cardLimit: existingRecord?.cardLimit ?? '5000',
-    password: account.password ?? existingRecord?.password ?? '',
     dateOfBirth: account.dateOfBirth ?? existingRecord?.dateOfBirth ?? '',
     gender: account.gender ?? existingRecord?.gender ?? '',
     avatar: account.avatar ?? existingRecord?.avatar ?? getInitials(account.name),
@@ -1825,6 +1879,7 @@ function App() {
   const [limitForm, setLimitForm] = useState({ transferLimit: '15000', cardLimit: '5000' });
   const [remoteAccountsReady, setRemoteAccountsReady] = useState(false);
   const [remoteAdminWorkspaceReady, setRemoteAdminWorkspaceReady] = useState(false);
+  const [serverAuthenticated, setServerAuthenticated] = useState(false);
   const latestAccountsRef = useRef(accounts);
   const lastRemoteAccountsSnapshotRef = useRef('');
   const lastRemoteAdminWorkspaceSnapshotRef = useRef('');
@@ -1978,6 +2033,10 @@ function App() {
   }, [accounts]);
 
   useEffect(() => {
+    if (!serverAuthenticated) {
+      return undefined;
+    }
+
     let cancelled = false;
 
     async function loadSharedAccounts() {
@@ -2011,13 +2070,47 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [serverAuthenticated]);
 
   useEffect(() => {
     writeStorage(ACTIVE_USER_STORAGE_KEY, activeUserId || null);
   }, [activeUserId]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function restoreServerSession() {
+      const session = await fetchAuthSession().catch(() => null);
+      if (cancelled) return;
+
+      if (!session?.user) {
+        setServerAuthenticated(false);
+        setActiveUserId('');
+        return;
+      }
+
+      setServerAuthenticated(true);
+      setAccounts((current) => {
+        const normalizedUser = normalizeAccountDefaults(session.user);
+        return current.some((account) => account.id === normalizedUser.id)
+          ? current.map((account) => (account.id === normalizedUser.id ? { ...account, ...normalizedUser } : account))
+          : [...current, normalizedUser];
+      });
+      setActiveUserId(session.user.id);
+      setMode(session.user.role === 'admin' ? loadDashboardMode(latestAccountsRef.current, session.user.id) : 'user');
+    }
+
+    restoreServerSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!serverAuthenticated) {
+      return undefined;
+    }
+
     let cancelled = false;
 
     async function loadSharedAdminWorkspace() {
@@ -2057,10 +2150,10 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [serverAuthenticated]);
 
   useEffect(() => {
-    if (!remoteAccountsReady) {
+    if (!remoteAccountsReady || !serverAuthenticated) {
       return;
     }
 
@@ -2089,10 +2182,10 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [accounts, remoteAccountsReady]);
+  }, [accounts, remoteAccountsReady, serverAuthenticated]);
 
   useEffect(() => {
-    if (!remoteAccountsReady) {
+    if (!remoteAccountsReady || !serverAuthenticated) {
       return;
     }
 
@@ -2113,7 +2206,7 @@ function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [remoteAccountsReady]);
+  }, [remoteAccountsReady, serverAuthenticated]);
 
   useEffect(() => {
     setAdminUserRecords((current) => syncAdminUserRecordsWithAccounts(current, accounts));
@@ -2246,7 +2339,7 @@ function App() {
   }, [adminWorkspaceSnapshot]);
 
   useEffect(() => {
-    if (!remoteAdminWorkspaceReady) {
+    if (!remoteAdminWorkspaceReady || !serverAuthenticated) {
       return;
     }
 
@@ -2275,10 +2368,10 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [adminWorkspaceSnapshot, remoteAdminWorkspaceReady]);
+  }, [adminWorkspaceSnapshot, remoteAdminWorkspaceReady, serverAuthenticated]);
 
   useEffect(() => {
-    if (!remoteAdminWorkspaceReady || typeof window === 'undefined') {
+    if (!remoteAdminWorkspaceReady || !serverAuthenticated || typeof window === 'undefined') {
       return;
     }
 
@@ -2313,14 +2406,14 @@ function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [accounts, remoteAdminWorkspaceReady]);
+  }, [accounts, remoteAdminWorkspaceReady, serverAuthenticated]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    if (!serverAuthenticated || typeof window === 'undefined') {
       return;
     }
 
-    const eventSource = new EventSource(getSharedEventsApiUrl());
+    const eventSource = new EventSource(getSharedEventsApiUrl(), { withCredentials: true });
 
     async function refreshSharedAccounts() {
       try {
@@ -2377,7 +2470,7 @@ function App() {
     return () => {
       eventSource.close();
     };
-  }, []);
+  }, [serverAuthenticated]);
 
   const userTransactionFeed = useMemo(() => {
     if (!activeUser) {
@@ -2546,91 +2639,55 @@ function App() {
     );
   }
 
-  function handleLogin() {
-    const matchedAccount = accounts.find(
-      (account) =>
-        (account.email.toLowerCase() === authForm.identifier.toLowerCase() || account.phone === authForm.identifier) &&
-        account.password === authForm.password,
-    );
-
-    if (!matchedAccount) {
-      setAuthMessage('Invalid email/phone or password. Use the seeded example credentials below.');
-      return;
+  async function handleLogin() {
+    try {
+      const { user } = await requestLogin({ identifier: authForm.identifier, password: authForm.password });
+      const remoteAccounts = (await fetchRemoteAccounts()).map(normalizeAccountDefaults);
+      setServerAuthenticated(true);
+      setAccounts(remoteAccounts);
+      setActiveUserId(user.id);
+      setMode(user.role === 'admin' ? 'admin' : 'user');
+      setPublicPage('home');
+      setAuthMessage('');
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Unable to sign in right now.');
     }
-
-    if (matchedAccount.status === 'Suspended') {
-      setAuthMessage('This account has been suspended by admin. Contact support for review.');
-      return;
-    }
-
-    setActiveUserId(matchedAccount.id);
-    setMode(matchedAccount.role === 'admin' ? 'admin' : 'user');
-    setPublicPage('home');
-    setAuthMessage('');
   }
 
   async function handleRegister(profilePhoto = '') {
-    const emailExists = accounts.some((account) => account.email.toLowerCase() === authForm.identifier.toLowerCase());
-
-    if (emailExists) {
-      setAuthMessage('That email already exists. Sign in with the existing account instead.');
-      return;
-    }
-
     if (!authForm.dateOfBirth || !authForm.gender) {
       setAuthMessage('Complete date of birth and gender before creating the account.');
       return;
     }
 
-    const newAccount = {
-      id: `USR-${String(accounts.length + 1).padStart(4, '0')}`,
-      role: 'user',
-      status: 'Active',
-      verificationStatus: 'Pending',
-      name: authForm.name.trim() || 'New User',
-      email: authForm.identifier.trim(),
-      phone: authForm.phone.trim() || '+1 202 555 0100',
-      password: authForm.password,
-      dateOfBirth: authForm.dateOfBirth,
-      gender: authForm.gender,
-      segment: 'Digital Client',
-      avatar: getInitials(authForm.name.trim() || 'New User'),
-      avatarImage: profilePhoto,
-      accounts: [
-        { label: 'Savings', amount: 0 },
-        { label: 'Current', amount: 0 },
-        { label: 'Business', amount: 0 },
-      ],
-      accountNumber: generatePncAccountNumber(`${authForm.identifier.trim()}-${authForm.phone.trim()}`),
-      routingNumber: PNC_ROUTING_NUMBER,
-      notifications: [],
-      pendingIncomingTransfers: [],
-      savedBanks: [],
-    };
-
-    setAccounts((current) => [...current, normalizeAccountDefaults(newAccount)]);
-    setActiveUserId(newAccount.id);
-    setMode('user');
-    setAuthMode('login');
-    setPublicPage('home');
-
-    const emailResult = await requestWelcomeEmail({
-      name: newAccount.name,
-      email: newAccount.email,
-      accountNumber: newAccount.accountNumber,
-    });
-
-    const registrationMessage = `Account created successfully. Your PNC account number is ${formatAccountNumber(newAccount.accountNumber)}. Verification by PNC is required before you can receive money from other users.`;
-    const emailMessage = emailResult.ok
-      ? ` A welcome email has been sent to ${newAccount.email}.`
-      : emailResult.configured === false
-        ? ' Account creation succeeded, but welcome email delivery is not configured on the server yet.'
-        : ' Account creation succeeded, but the welcome email could not be sent right now.';
-
-    setAuthMessage(`${registrationMessage}${emailMessage}`);
+    try {
+      const { user, emailQueued } = await requestRegistration({
+        name: authForm.name,
+        email: authForm.identifier,
+        phone: authForm.phone,
+        password: authForm.password,
+        dateOfBirth: authForm.dateOfBirth,
+        gender: authForm.gender,
+        avatarImage: profilePhoto,
+      });
+      const remoteAccounts = (await fetchRemoteAccounts()).map(normalizeAccountDefaults);
+      setServerAuthenticated(true);
+      setAccounts(remoteAccounts);
+      setActiveUserId(user.id);
+      setMode('user');
+      setAuthMode('login');
+      setPublicPage('home');
+      setAuthMessage(
+        `Account created successfully. Your PNC account number is ${formatAccountNumber(user.accountNumber)}. Verification by PNC is required before you can receive money from other users.${emailQueued ? ' A welcome email request was accepted by the configured provider.' : ' Welcome email delivery is not confirmed.'}`,
+      );
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Unable to create the account right now.');
+    }
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    await requestLogout();
+    setServerAuthenticated(false);
     setActiveUserId('');
     setMode('user');
     setAuthMode('login');
@@ -2655,7 +2712,7 @@ function App() {
 
   function confirmLogout() {
     setLogoutDialogOpen(false);
-    handleLogout();
+    void handleLogout();
   }
 
   function handleRestoreDemo() {
@@ -2672,7 +2729,7 @@ function App() {
       dateOfBirth: '',
       gender: '',
     });
-    setAuthMessage('Demo accounts restored.');
+    setAuthMessage('Sample accounts restored.');
   }
 
   function handleAddSavedBank(bankForm) {

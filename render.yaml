@@ -10,6 +10,20 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: APP_BASE_URL
+        value: https://pnc-core.com
+      - key: ALLOWED_ORIGINS
+        value: https://pnc-core.com,https://www.pnc-core.com
+      - key: EMAIL_MODE
+        value: disabled
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_WEBHOOK_SECRET
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false
+      - key: EMAIL_TEST_RECIPIENT
+        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
