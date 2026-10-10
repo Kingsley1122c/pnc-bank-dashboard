@@ -166,7 +166,7 @@ const loadingScreenContent = {
   'auth-login': {
     eyebrow: 'Secure Sign-In',
     title: 'Preparing login access',
-    message: 'Checking credentials and opening the correct dashboard experience.',
+    message: 'Verifying your secure session and opening the correct dashboard experience.',
     tone: 'teal',
   },
   'auth-register': {

@@ -767,11 +767,17 @@ app.get('/api/events', (request, response) => {
 });
 
 if (existsSync(distDir)) {
-  app.use(express.static(distDir));
+  app.use('/assets', express.static(path.join(distDir, 'assets'), {
+    fallthrough: false,
+    immutable: true,
+    maxAge: '1y',
+  }));
+  app.use(express.static(distDir, { index: false }));
 
-  app.get(/^(?!\/api).*/, async (_request, response, next) => {
+  app.get(/^(?!\/api|\/assets).*/, async (_request, response, next) => {
     try {
       const indexHtml = await readFile(path.join(distDir, 'index.html'), 'utf8');
+      response.setHeader('Cache-Control', 'no-store');
       response.type('html').send(indexHtml);
     } catch (error) {
       next(error);
