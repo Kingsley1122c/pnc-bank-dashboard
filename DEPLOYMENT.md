@@ -34,12 +34,14 @@ The authoritative Namecheap nameservers returned the following website records o
 
 Preserve unrelated MX and TXT records. Also check for and remove hostname-conflicting URL Redirect, ALIAS, and `AAAA` records only when updating that same hostname according to Render's displayed instructions. Render does not use IPv6 for custom-domain routing, so an `AAAA` record on `@` or `www` can prevent reliable routing.
 
-Record the verified values here during deployment:
+Applied Namecheap records:
 
 | Purpose | Type | Host | Value | TTL |
 | --- | --- | --- | --- | --- |
-| Apex domain | From Render | `@` | From Render custom-domain screen | Automatic |
-| `www` domain | From Render | `www` | From Render custom-domain screen | Automatic |
+| Apex domain | `A` | `@` | `216.24.57.1` | 1 minute |
+| `www` domain | `CNAME` | `www` | `pnc-bank-dashboard.onrender.com` | 1 minute |
+
+Both records were published by Namecheap and verified by Render on October 10, 2026. TLS certificate issuance must still show `issued` before the custom domain is considered production-ready.
 
 Safe update order:
 
