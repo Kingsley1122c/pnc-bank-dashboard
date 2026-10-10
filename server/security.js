@@ -5,16 +5,25 @@ const scrypt = promisify(scryptCallback);
 const PASSWORD_KEY_LENGTH = 64;
 const PASSWORD_SCHEME = 'scrypt';
 
-export async function hashPassword(password) {
+async function derivePasswordHash(password) {
   const normalizedPassword = String(password ?? '');
-
-  if (normalizedPassword.length < 8) {
-    throw new Error('Password must be at least 8 characters long.');
-  }
-
   const salt = randomBytes(16).toString('hex');
   const derivedKey = await scrypt(normalizedPassword, salt, PASSWORD_KEY_LENGTH);
   return `${PASSWORD_SCHEME}$${salt}$${Buffer.from(derivedKey).toString('hex')}`;
+}
+
+export async function hashPassword(password) {
+  if (String(password ?? '').length < 8) {
+    throw new Error('Password must be at least 8 characters long.');
+  }
+  return derivePasswordHash(password);
+}
+
+export async function hashLegacyPassword(password) {
+  if (String(password ?? '').length === 0) {
+    throw new Error('Legacy password cannot be empty.');
+  }
+  return derivePasswordHash(password);
 }
 
 export async function verifyPassword(password, passwordHash) {

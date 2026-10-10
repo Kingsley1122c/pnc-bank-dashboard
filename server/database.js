@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
 
-import { hashPassword } from './security.js';
+import { hashLegacyPassword } from './security.js';
 
 const schemaFile = path.join(path.dirname(fileURLToPath(import.meta.url)), 'database', 'schema.sql');
 const JSON_IMPORT_KEY = 'json-import-v1';
@@ -87,7 +87,7 @@ function accountRawWithoutCollections(account) {
 async function prepareAccounts(accounts) {
   return Promise.all(accounts.map(async (account) => ({
     account,
-    passwordHash: account.passwordHash || await hashPassword(String(account.password ?? '')),
+    passwordHash: account.passwordHash || await hashLegacyPassword(String(account.password ?? '')),
   })));
 }
 

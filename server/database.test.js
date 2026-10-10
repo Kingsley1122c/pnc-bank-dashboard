@@ -10,7 +10,7 @@ async function writeFixture(directory) {
   await writeFile(path.join(directory, 'accounts.json'), JSON.stringify([
     {
       id: 'USR-1000', role: 'user', status: 'Active', verificationStatus: 'Verified', name: 'Migration User',
-      email: 'migration@example.com', phone: '+15550001000', password: 'migration-pass', accountNumber: '1000001000', routingNumber: '031100089',
+      email: 'migration@example.com', phone: '+15550001000', password: 'short', accountNumber: '1000001000', routingNumber: '031100089',
       accounts: [{ label: 'Current', amount: 125.45 }], savedBanks: [], issuedCards: [], pendingIncomingTransfers: [],
       notifications: [{ id: 'NOTICE-1', type: 'account-update', title: 'Imported', message: 'Preserved', createdAt: '2026-01-01T00:00:00.000Z', readAt: null }],
     },
