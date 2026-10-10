@@ -776,10 +776,14 @@ app.get('/api/events', (request, response) => {
 
 if (existsSync(distDir)) {
   app.use('/assets', express.static(path.join(distDir, 'assets'), {
-    fallthrough: false,
+    fallthrough: true,
     immutable: true,
     maxAge: '1y',
   }));
+  app.use('/assets', (_request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.status(404).json({ message: 'Asset not found.' });
+  });
   app.use(express.static(distDir, { index: false }));
 
   app.get(/^(?!\/api|\/assets).*/, async (_request, response, next) => {
