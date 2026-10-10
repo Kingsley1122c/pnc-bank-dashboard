@@ -258,9 +258,9 @@ app.post('/api/webhooks/resend', express.raw({ type: 'application/json', limit: 
   }
   try {
     const event = resendProvider.verifyWebhook(request.body.toString('utf8'), {
-      id: request.get('svix-id'),
-      timestamp: request.get('svix-timestamp'),
-      signature: request.get('svix-signature'),
+      id: request.get('webhook-id') || request.get('svix-id'),
+      timestamp: request.get('webhook-timestamp') || request.get('svix-timestamp'),
+      signature: request.get('webhook-signature') || request.get('svix-signature'),
     }, webhookSecret);
     response.json(recordResendWebhook(database, event));
   } catch {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,8 @@ test('account API requires a session and never returns password material', async
   process.env.NODE_ENV = 'test';
   process.env.APP_BASE_URL = 'http://localhost:5173';
   process.env.RESEND_API_KEY = 're_test_only';
-  process.env.RESEND_WEBHOOK_SECRET = 'whsec_test_only';
+  const webhookKey = Buffer.from('pnc-webhook-test-key');
+  process.env.RESEND_WEBHOOK_SECRET = `whsec_${webhookKey.toString('base64')}`;
   process.env.EMAIL_FROM = 'no-reply@example.com';
   const { app } = await import(`./index.js?test=${Date.now()}`);
   const server = app.listen(0, '127.0.0.1');
@@ -38,6 +40,23 @@ test('account API requires a session and never returns password material', async
     body: JSON.stringify({ id: 'event-invalid', type: 'email.delivered', data: { email_id: 'message-invalid' } }),
   });
   assert.equal(invalidWebhookResponse.status, 400);
+  const webhookId = 'event-standard-headers';
+  const webhookTimestamp = String(Math.floor(Date.now() / 1000));
+  const webhookBody = JSON.stringify({ id: webhookId, type: 'email.delivered', data: { email_id: 'message-standard-headers' } });
+  const webhookSignature = createHmac('sha256', webhookKey)
+    .update(`${webhookId}.${webhookTimestamp}.${webhookBody}`)
+    .digest('base64');
+  const validWebhookResponse = await fetch(`${baseUrl}/api/webhooks/resend`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'webhook-id': webhookId,
+      'webhook-timestamp': webhookTimestamp,
+      'webhook-signature': `v1,${webhookSignature}`,
+    },
+    body: webhookBody,
+  });
+  assert.equal(validWebhookResponse.status, 200);
   const originlessLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
