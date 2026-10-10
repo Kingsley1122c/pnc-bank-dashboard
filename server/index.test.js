@@ -137,11 +137,18 @@ test('account API requires a session and never returns password material', async
     body: JSON.stringify({ workspace: { adminWithdrawalRecords: [{ id: withdrawal.request.id, status: 'Approved' }] } }),
   });
   assert.equal(forgedWorkspaceResponse.status, 400);
+  const forgedAccountWorkspaceResponse = await fetch(`${baseUrl}/api/admin-workspace`, {
+    method: 'PUT',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace: { adminUserRecords: [{ accountId: registered.user.id, role: 'admin', status: 'Active' }] } }),
+  });
+  assert.equal(forgedAccountWorkspaceResponse.status, 400);
   const adminAccountsResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { Cookie: adminCookie } });
   assert.equal(adminAccountsResponse.status, 200);
   const adminAccounts = (await adminAccountsResponse.json()).accounts;
   assert.ok(adminAccounts.some((account) => account.id === 'USR-0001'));
   assert.ok(adminAccounts.some((account) => account.id === registered.user.id));
+  const registeredAdminAccount = adminAccounts.find((account) => account.id === registered.user.id);
   const adminWithdrawalsResponse = await fetch(`${baseUrl}/api/withdrawals`, { headers: { Cookie: adminCookie } });
   assert.ok((await adminWithdrawalsResponse.json()).withdrawals.some((entry) => entry.id === withdrawal.request.id));
   const customerDecisionResponse = await fetch(`${baseUrl}/api/admin/withdrawals/${withdrawal.request.id}/decision`, {
@@ -150,6 +157,12 @@ test('account API requires a session and never returns password material', async
     body: JSON.stringify({ decision: 'approve', expectedUpdatedAt: withdrawal.request.updatedAt }),
   });
   assert.equal(customerDecisionResponse.status, 403);
+  const customerStatusResponse = await fetch(`${baseUrl}/api/admin/accounts/${registered.user.id}/status`, {
+    method: 'PATCH',
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'Suspended', expectedUpdatedAt: registered.user.updatedAt }),
+  });
+  assert.equal(customerStatusResponse.status, 403);
   const approvalResponse = await fetch(`${baseUrl}/api/admin/withdrawals/${withdrawal.request.id}/decision`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
@@ -170,6 +183,15 @@ test('account API requires a session and never returns password material', async
     body: JSON.stringify({ code: approval.approvalCode, expectedUpdatedAt: approval.request.updatedAt }),
   });
   assert.equal(codeResponse.status, 200);
+  const verifyResponse = await fetch(`${baseUrl}/api/admin/accounts/${registered.user.id}/verify`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedUpdatedAt: registeredAdminAccount.updatedAt }),
+  });
+  assert.equal(verifyResponse.status, 200);
+  const verified = await verifyResponse.json();
+  assert.equal(verified.releasedTransferCount, 1);
+  assert.equal(verified.account.verificationStatus, 'Verified');
   const adjustmentResponse = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'approved-adjustment-0001' },
@@ -177,7 +199,7 @@ test('account API requires a session and never returns password material', async
   });
   assert.equal(adjustmentResponse.status, 201);
   const adjustment = await adjustmentResponse.json();
-  assert.equal(adjustment.account.accounts.find((account) => account.label === 'Current').amount, 5);
+  assert.equal(adjustment.account.accounts.find((account) => account.label === 'Current').amount, 14);
 
   const secondLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',

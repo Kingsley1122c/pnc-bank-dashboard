@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createAuthService } from './auth.js';
+import { AccountManagementError, updateAccountStatus, verifyAccount } from './account-management.js';
 import {
   createDatabaseAccount,
   createDatabaseSessionStore,
@@ -732,8 +733,8 @@ app.put('/api/admin-workspace', authService.requireAuth, authService.requireRole
     return;
   }
 
-  if (Object.hasOwn(workspace, 'adminWithdrawalRecords')) {
-    response.status(400).json({ message: 'Withdrawal records must use authorized operation endpoints.' });
+  if (Object.hasOwn(workspace, 'adminWithdrawalRecords') || Object.hasOwn(workspace, 'adminUserRecords')) {
+    response.status(400).json({ message: 'Account and withdrawal records must use authorized operation endpoints.' });
     return;
   }
 
@@ -781,6 +782,43 @@ app.post('/api/admin/balance-adjustments', authService.requireAuth, authService.
       return;
     }
     response.status(500).json({ message: 'Unable to post the balance adjustment right now.' });
+  }
+});
+
+app.patch('/api/admin/accounts/:userId/status', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
+  try {
+    const result = updateAccountStatus(database, {
+      adminId: request.auth.account.id,
+      targetUserId: request.params.userId,
+      status: request.body?.status,
+      expectedUpdatedAt: request.body?.expectedUpdatedAt,
+    });
+    broadcastEvent('accounts');
+    response.json(result);
+  } catch (error) {
+    if (error instanceof AccountManagementError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to update the account status right now.' });
+  }
+});
+
+app.post('/api/admin/accounts/:userId/verify', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
+  try {
+    const result = verifyAccount(database, {
+      adminId: request.auth.account.id,
+      targetUserId: request.params.userId,
+      expectedUpdatedAt: request.body?.expectedUpdatedAt,
+    });
+    broadcastEvent('accounts');
+    response.json(result);
+  } catch (error) {
+    if (error instanceof AccountManagementError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to verify the account right now.' });
   }
 });
 

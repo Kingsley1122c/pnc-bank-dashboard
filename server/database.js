@@ -364,6 +364,7 @@ export function readDatabaseAccounts(db) {
     role: user.role,
     status: user.status,
     verificationStatus: user.verification_status,
+    updatedAt: user.updated_at,
     name: user.name,
     email: user.email,
     phone: user.phone ?? '',

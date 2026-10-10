@@ -1409,6 +1409,30 @@ async function requestAdminBalanceAdjustment(adjustment, idempotencyKey) {
   return payload;
 }
 
+async function requestAccountStatus(userId, status, expectedUpdatedAt) {
+  const response = await fetch(`${getSharedApiBaseUrl()}/api/admin/accounts/${encodeURIComponent(userId)}/status`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, expectedUpdatedAt }),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to update the account status right now.');
+  return payload;
+}
+
+async function requestAccountVerification(userId, expectedUpdatedAt) {
+  const response = await fetch(`${getSharedApiBaseUrl()}/api/admin/accounts/${encodeURIComponent(userId)}/verify`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedUpdatedAt }),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to verify the account right now.');
+  return payload;
+}
+
 async function fetchRemoteWithdrawals() {
   const response = await fetch(getWithdrawalsApiUrl(), { credentials: 'include' });
   const payload = await readApiPayload(response);
@@ -1515,13 +1539,14 @@ async function fetchRemoteAdminWorkspace() {
 }
 
 async function saveRemoteAdminWorkspace(workspace) {
+  const { adminUserRecords: _adminUserRecords, adminWithdrawalRecords: _adminWithdrawalRecords, ...safeWorkspace } = workspace;
   const response = await fetch(getSharedAdminWorkspaceApiUrl(), {
     method: 'PUT',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ workspace }),
+    body: JSON.stringify({ workspace: safeWorkspace }),
   });
 
   if (!response.ok) {
@@ -3948,7 +3973,7 @@ function App() {
     setSelectedTransactionIds([]);
   }
 
-  function handleAdminUserAction(action, targetIdentifier = selectedAdminRecord?.accountId ?? selectedAdminRecord?.name) {
+  async function handleAdminUserAction(action, targetIdentifier = selectedAdminRecord?.accountId ?? selectedAdminRecord?.name) {
     if (!targetIdentifier) {
       return;
     }
@@ -3964,101 +3989,25 @@ function App() {
     setSelectedUser(targetRecord.name);
 
     if (action === 'delete') {
-      openAdminDialog(
-        'delete-user',
-        targetRecord.accountId ?? targetRecord.name,
-        'Delete user account',
-        `Remove ${targetRecord.name} from the admin customer list? This action is destructive.`,
-      );
+      setAdminNotice('Customer deletion is unavailable because destructive account removal requires a separate retention workflow.');
+      return;
+    }
+
+    const authoritativeAccount = accounts.find((account) => account.id === targetRecord.accountId && account.role === 'user');
+    if (!authoritativeAccount) {
+      setAdminNotice('This customer account is unavailable. Refresh and try again.');
       return;
     }
 
     if (action === 'verify') {
-      let releasedTransfers = [];
-
-      setAdminUserRecords((current) =>
-        current.map((user) =>
-          user.name === targetRecord.name
-            ? {
-                ...user,
-                verificationStatus: 'Verified',
-                kyc: 'Verified',
-                kycLevel: 'Verified Tier 2',
-                lastActivity: 'Just now',
-              }
-            : user,
-        ),
-      );
-
-      if (targetRecord.accountId) {
-        setAccounts((current) =>
-          current.map((account) => {
-            if (account.id !== targetRecord.accountId) {
-              return account;
-            }
-
-            releasedTransfers = account.pendingIncomingTransfers ?? [];
-            const targetLabel = account.accounts.some((entry) => entry.label === 'Current')
-              ? 'Current'
-              : account.accounts[0]?.label;
-            const releasedTotal = releasedTransfers.reduce((sum, entry) => sum + entry.amountValue, 0);
-
-            return {
-              ...account,
-              verificationStatus: 'Verified',
-              accounts: account.accounts.map((entry) =>
-                entry.label === targetLabel
-                  ? { ...entry, amount: Number((entry.amount + releasedTotal).toFixed(2)) }
-                  : entry,
-              ),
-              pendingIncomingTransfers: [],
-              notifications: [
-                {
-                  id: `NOTICE-VERIFIED-${Date.now()}`,
-                  type: 'verification-complete',
-                  message: 'Your account verification is complete. Held incoming PNC transfers have been released to your account.',
-                },
-                ...(account.notifications ?? []).filter((entry) => entry.type !== 'verification-hold'),
-              ],
-            };
-          }),
-        );
+      try {
+        const result = await requestAccountVerification(authoritativeAccount.id, authoritativeAccount.updatedAt);
+        setAccounts((current) => current.map((account) => account.id === authoritativeAccount.id ? { ...account, ...result.account, pendingIncomingTransfers: [] } : account));
+        setAdminNotice(`${targetRecord.name} has been verified.${result.releasedTransferCount > 0 ? ` ${result.releasedTransferCount} held transfer(s) released.` : ''}`);
+        pushAdminActivity(`${activeUser?.name ?? 'Admin'} verified ${targetRecord.name}.${result.releasedTransferCount > 0 ? ` Released ${result.releasedTransferCount} held transfer(s).` : ''}`, { promoteToLiveFeed: true });
+      } catch (error) {
+        setAdminNotice(error instanceof Error ? error.message : 'Unable to verify the account right now.');
       }
-
-      if (releasedTransfers.length > 0) {
-        setAdminTransactionRecords((current) => [
-          ...releasedTransfers.map((entry) => ({
-            id: `TX-${Math.floor(1000 + Math.random() * 9000)}`,
-            name: entry.senderName,
-            type: 'Income',
-            amount: `+${formatCurrency(entry.amountValue)}`,
-            date: getDisplayDate(),
-            status: 'Completed',
-            owner: targetRecord.name,
-            reviewStatus: 'Reviewed',
-            destination: 'PNC Bank • Released after verification',
-            note: entry.note || `Incoming PNC transfer from ${entry.senderName}`,
-          })),
-          ...current,
-        ]);
-      }
-
-      setAdminNotice(`${targetRecord.name} has been verified.${releasedTransfers.length > 0 ? ` ${releasedTransfers.length} held transfer(s) released.` : ''}`);
-      pushAdminActivity(`${activeUser?.name ?? 'Admin'} verified ${targetRecord.name}.${releasedTransfers.length > 0 ? ` Released ${releasedTransfers.length} held transfer(s).` : ''}`, {
-        promoteToLiveFeed: true,
-      });
-
-      void notifyUserAccountMessage({
-        accountId: targetRecord.accountId,
-        title: 'Account verification complete',
-        message: releasedTransfers.length > 0
-          ? `Your account verification is complete. ${releasedTransfers.length} held incoming transfer(s) have been released to your account.`
-          : 'Your account verification is complete and your account is now fully verified.',
-        emailSubject: 'Account verification complete',
-        emailMessage: releasedTransfers.length > 0
-          ? `Your account verification is complete. ${releasedTransfers.length} held incoming transfer(s) have been released to your account.`
-          : 'Your account verification is complete and your account is now fully verified.',
-      });
       return;
     }
 
@@ -4074,39 +4023,15 @@ function App() {
       flag: 88,
     }[action];
 
-    setAdminUserRecords((current) =>
-      current.map((user) =>
-        user.name === targetRecord.name
-          ? {
-              ...user,
-              status: nextStatus,
-              lastActivity: 'Just now',
-              riskScore: nextRiskScore,
-            }
-          : user,
-      ),
-    );
-
-    if (targetRecord.accountId) {
-      setAccounts((current) =>
-        current.map((account) =>
-          account.id === targetRecord.accountId ? { ...account, status: nextStatus } : account,
-        ),
-      );
+    try {
+      const result = await requestAccountStatus(authoritativeAccount.id, nextStatus, authoritativeAccount.updatedAt);
+      setAccounts((current) => current.map((account) => account.id === authoritativeAccount.id ? { ...account, ...result.account } : account));
+      setAdminUserRecords((current) => current.map((user) => user.accountId === authoritativeAccount.id ? { ...user, status: nextStatus, lastActivity: 'Just now', riskScore: nextRiskScore } : user));
+      setAdminNotice(`${targetRecord.name} is now ${nextStatus}.`);
+      pushAdminActivity(`${activeUser?.name ?? 'Admin'} changed ${targetRecord.name} to ${nextStatus}.`, { promoteToLiveFeed: action !== 'activate' });
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Unable to update the account status right now.');
     }
-
-    setAdminNotice(`${targetRecord.name} is now ${nextStatus}.`);
-    pushAdminActivity(`${activeUser?.name ?? 'Admin'} changed ${targetRecord.name} to ${nextStatus}.`, {
-      promoteToLiveFeed: action !== 'activate',
-    });
-
-    void notifyUserAccountMessage({
-      accountId: targetRecord.accountId,
-      title: `Account ${nextStatus.toLowerCase()}`,
-      message: `Your account status is now ${nextStatus}. Please contact support if you need a review.`,
-      emailSubject: `Account ${nextStatus.toLowerCase()}`,
-      emailMessage: `Your account status is now ${nextStatus}. Please contact support if you need a review.`,
-    });
   }
 
   function handleWithdrawalDecision(requestId, decision) {
@@ -4399,20 +4324,6 @@ function App() {
     if (adminDialog.requiresNote && !adminDialog.note.trim()) {
       setAdminNotice('Add a reviewer note before confirming this case update.');
       return;
-    }
-
-    if (adminDialog.kind === 'delete-user') {
-      const deletedRecord = adminUserRecords.find((user) => user.accountId === adminDialog.targetId || user.name === adminDialog.targetId);
-      const deletedName = deletedRecord?.name ?? adminDialog.targetId;
-
-      setAdminUserRecords((current) => current.filter((user) => user.accountId !== adminDialog.targetId && user.name !== adminDialog.targetId));
-
-      if (deletedRecord?.accountId) {
-        setAccounts((current) => current.filter((account) => account.id !== deletedRecord.accountId));
-      }
-
-      setAdminNotice(`${deletedName} was removed from the customer list.`);
-      pushAdminActivity(`${activeUser?.name ?? 'Admin'} deleted ${deletedName}.`, { promoteToLiveFeed: true });
     }
 
     if (adminDialog.kind === 'reject-withdrawal') {
