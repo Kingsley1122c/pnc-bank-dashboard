@@ -42,7 +42,7 @@ test('account API requires a session and never returns password material', async
   assert.equal(invalidWebhookResponse.status, 400);
   const webhookId = 'event-standard-headers';
   const webhookTimestamp = String(Math.floor(Date.now() / 1000));
-  const webhookBody = JSON.stringify({ id: webhookId, type: 'email.delivered', data: { email_id: 'message-standard-headers' } });
+  const webhookBody = JSON.stringify({ type: 'email.delivered', data: { email_id: 'message-standard-headers' } });
   const webhookSignature = createHmac('sha256', webhookKey)
     .update(`${webhookId}.${webhookTimestamp}.${webhookBody}`)
     .digest('base64');

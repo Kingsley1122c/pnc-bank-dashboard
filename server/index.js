@@ -257,12 +257,13 @@ app.post('/api/webhooks/resend', express.raw({ type: 'application/json', limit: 
     return;
   }
   try {
+    const webhookId = request.get('webhook-id') || request.get('svix-id');
     const event = resendProvider.verifyWebhook(request.body.toString('utf8'), {
-      id: request.get('webhook-id') || request.get('svix-id'),
+      id: webhookId,
       timestamp: request.get('webhook-timestamp') || request.get('svix-timestamp'),
       signature: request.get('webhook-signature') || request.get('svix-signature'),
     }, webhookSecret);
-    response.json(recordResendWebhook(database, event));
+    response.json(recordResendWebhook(database, { ...event, id: event.id || webhookId }));
   } catch (error) {
     console.warn('Resend webhook verification failed.', {
       error: error?.message || 'Unknown verification error',
