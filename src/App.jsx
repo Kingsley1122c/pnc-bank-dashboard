@@ -1439,6 +1439,42 @@ async function requestWithdrawal(withdrawal, idempotencyKey) {
   return payload;
 }
 
+async function requestWithdrawalDecision(withdrawalId, decision) {
+  const response = await fetch(`${getSharedApiBaseUrl()}/api/admin/withdrawals/${encodeURIComponent(withdrawalId)}/decision`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(decision),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to review the withdrawal right now.');
+  return payload;
+}
+
+async function requestWithdrawalCode(withdrawalId, submission) {
+  const response = await fetch(`${getWithdrawalsApiUrl()}/${encodeURIComponent(withdrawalId)}/code`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(submission),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to submit the withdrawal code right now.');
+  return payload;
+}
+
+async function requestWithdrawalExpiry(withdrawalId, expectedUpdatedAt) {
+  const response = await fetch(`${getWithdrawalsApiUrl()}/${encodeURIComponent(withdrawalId)}/expire`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedUpdatedAt }),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to update the withdrawal review right now.');
+  return payload;
+}
+
 async function fetchRemoteAccounts() {
   const response = await fetch(getSharedAccountsApiUrl(), { credentials: 'include' });
 
@@ -1759,11 +1795,15 @@ function syncAdminUserRecordsWithAccounts(currentRecords, accounts) {
   return [...accountRecords, ...standaloneRecords];
 }
 
-function mergeWithdrawalRecords(currentRecords, workspaceRecords) {
+function mergeRemoteWithdrawalRecords(currentRecords, remoteRecords) {
   const currentById = new Map(currentRecords.map((record) => [record.id, record]));
-  const mergedWorkspaceRecords = workspaceRecords.map((record) => ({ ...currentById.get(record.id), ...record }));
-  const workspaceIds = new Set(workspaceRecords.map((record) => record.id));
-  return [...mergedWorkspaceRecords, ...currentRecords.filter((record) => !workspaceIds.has(record.id))];
+  return remoteRecords.map((record) => {
+    const current = currentById.get(record.id);
+    const inMemoryCode = /^PNC-\d{6}$/.test(String(current?.code ?? '')) && record.status === 'Approved'
+      ? current.code
+      : record.code;
+    return { ...record, code: inMemoryCode };
+  });
 }
 
 function getDefaultAdminTransactionRecords() {
@@ -2207,7 +2247,6 @@ function App() {
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
-        setAdminWithdrawalRecords((current) => mergeWithdrawalRecords(current, remoteWorkspace.adminWithdrawalRecords));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
         setAdminNotificationRecords(remoteWorkspace.adminNotificationRecords);
         setAdminActivityRecords(remoteWorkspace.adminActivityRecords);
@@ -2267,7 +2306,7 @@ function App() {
     async function loadWithdrawals() {
       try {
         const remoteWithdrawals = await fetchRemoteWithdrawals();
-        if (!cancelled) setAdminWithdrawalRecords(remoteWithdrawals);
+        if (!cancelled) setAdminWithdrawalRecords((current) => mergeRemoteWithdrawalRecords(current, remoteWithdrawals));
       } catch {
         return;
       }
@@ -2288,7 +2327,6 @@ function App() {
       adminSection,
       adminNotice,
       adminUserRecords,
-      adminWithdrawalRecords,
       adminCardRecords,
       adminNotificationRecords,
       adminActivityRecords,
@@ -2311,7 +2349,6 @@ function App() {
       adminSettings,
       adminTransactionRecords,
       adminUserRecords,
-      adminWithdrawalRecords,
       selectedUser,
     ],
   );
@@ -2459,7 +2496,6 @@ function App() {
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, accounts));
-        setAdminWithdrawalRecords((current) => mergeWithdrawalRecords(current, remoteWorkspace.adminWithdrawalRecords));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
         setAdminNotificationRecords(remoteWorkspace.adminNotificationRecords);
         setAdminActivityRecords(remoteWorkspace.adminActivityRecords);
@@ -2507,7 +2543,6 @@ function App() {
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
-        setAdminWithdrawalRecords((current) => mergeWithdrawalRecords(current, remoteWorkspace.adminWithdrawalRecords));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
         setAdminNotificationRecords(remoteWorkspace.adminNotificationRecords);
         setAdminActivityRecords(remoteWorkspace.adminActivityRecords);
@@ -2524,7 +2559,8 @@ function App() {
 
     async function refreshWithdrawals() {
       try {
-        setAdminWithdrawalRecords(await fetchRemoteWithdrawals());
+        const remoteWithdrawals = await fetchRemoteWithdrawals();
+        setAdminWithdrawalRecords((current) => mergeRemoteWithdrawalRecords(current, remoteWithdrawals));
       } catch {
         return;
       }
@@ -3268,38 +3304,7 @@ function App() {
       return { ok: false, message: 'Enter the withdrawal code sent by admin.' };
     }
 
-    let matchedRequest = null;
-
-    setAdminWithdrawalRecords((current) =>
-      current.map((request) => {
-        if (request.id !== requestId || request.requesterId !== activeUser.id) {
-          return request;
-        }
-
-        matchedRequest = request;
-
-        if (request.status !== 'Approved') {
-          return request;
-        }
-
-        if (String(request.code ?? '').toUpperCase() !== cleanCode) {
-          return request;
-        }
-
-        const nowIso = new Date().toISOString();
-        const expectedFailureAt = new Date(Date.now() + WITHDRAWAL_CODE_REVIEW_FAIL_DELAY_MS).toISOString();
-
-        return {
-          ...request,
-          status: 'Pending',
-          payoutState: 'Code Entered',
-          codeEnteredAt: nowIso,
-          expectedFailureAt,
-          failureReason: '',
-        };
-      }),
-    );
-
+    const matchedRequest = adminWithdrawalRecords.find((request) => request.id === requestId && request.requesterId === activeUser.id);
     if (!matchedRequest) {
       return { ok: false, message: 'Withdrawal request could not be found.' };
     }
@@ -3308,8 +3313,11 @@ function App() {
       return { ok: false, message: `This withdrawal is currently ${matchedRequest.status.toLowerCase()} and cannot accept a code.` };
     }
 
-    if (String(matchedRequest.code ?? '').toUpperCase() !== cleanCode) {
-      return { ok: false, message: 'Invalid withdrawal code. Please check and try again.' };
+    try {
+      const result = await requestWithdrawalCode(requestId, { code: cleanCode, expectedUpdatedAt: matchedRequest.updatedAt });
+      setAdminWithdrawalRecords((current) => current.map((request) => request.id === requestId ? result.request : request));
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to submit the withdrawal code right now.' };
     }
 
     setAdminNotice(`${matchedRequest.id} code submitted by ${activeUser.name}. Request stays pending for compliance review.`);
@@ -3411,32 +3419,14 @@ function App() {
 
       const timerId = window.setTimeout(async () => {
         activeTimers.delete(request.id);
-
-        let failedRequest = null;
-
-        setAdminWithdrawalRecords((current) =>
-          current.map((entry) => {
-            if (entry.id !== request.id) {
-              return entry;
-            }
-
-            if (entry.status !== 'Pending' || !entry.codeEnteredAt || entry.failedAt) {
-              return entry;
-            }
-
-            failedRequest = {
-              ...entry,
-              status: 'Failed',
-              failedAt: new Date().toISOString(),
-              code: 'Expired',
-              failureReason: 'Compliance timeout',
-            };
-
-            return failedRequest;
-          }),
-        );
-
-        if (!failedRequest) {
+        let failedRequest;
+        try {
+          const result = await requestWithdrawalExpiry(request.id, request.updatedAt);
+          failedRequest = result.request;
+          setAdminWithdrawalRecords((current) => current.map((entry) => entry.id === request.id ? failedRequest : entry));
+        } catch {
+          const remoteWithdrawals = await fetchRemoteWithdrawals().catch(() => null);
+          if (remoteWithdrawals) setAdminWithdrawalRecords((current) => mergeRemoteWithdrawalRecords(current, remoteWithdrawals));
           return;
         }
 
@@ -4129,27 +4119,23 @@ function App() {
   }
 
   async function applyWithdrawalDecision(requestId, decision) {
-    let updatedRequest = null;
-
-    setAdminWithdrawalRecords((current) =>
-      current.map((request) => {
-        if (request.id !== requestId) {
-          return request;
-        }
-
-        updatedRequest = {
-          ...request,
-          status: decision === 'approve' ? 'Approved' : 'Rejected',
-          code: decision === 'approve' ? `PNC-${Math.floor(100000 + Math.random() * 899999)}` : 'Not issued',
-        };
-
-        return updatedRequest;
-      }),
-    );
-
-    if (!updatedRequest) {
+    const targetRequest = adminWithdrawalRecords.find((request) => request.id === requestId);
+    if (!targetRequest) {
       return;
     }
+
+    let result;
+    try {
+      result = await requestWithdrawalDecision(requestId, { decision, expectedUpdatedAt: targetRequest.updatedAt });
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Unable to review the withdrawal right now.');
+      const remoteWithdrawals = await fetchRemoteWithdrawals().catch(() => null);
+      if (remoteWithdrawals) setAdminWithdrawalRecords((current) => mergeRemoteWithdrawalRecords(current, remoteWithdrawals));
+      return;
+    }
+
+    const updatedRequest = { ...result.request, code: result.approvalCode ?? result.request.code };
+    setAdminWithdrawalRecords((current) => current.map((request) => request.id === requestId ? updatedRequest : request));
 
     setAdminNotice(`${updatedRequest.id} ${decision === 'approve' ? 'approved' : 'rejected'}.`);
     pushAdminActivity(
@@ -4162,14 +4148,6 @@ function App() {
       return;
     }
 
-    const rejectionMessage = `Withdrawal ${updatedRequest.id} was rejected by admin. No payout was completed and no funds were debited from your account.`;
-    await notifyWithdrawalStatus({
-      targetRequest: updatedRequest,
-      notificationTitle: 'Withdrawal rejected',
-      notificationMessage: rejectionMessage,
-      emailSubject: `Withdrawal rejected for ${updatedRequest.id}`,
-      emailMessage: rejectionMessage,
-    });
   }
 
   async function handleCardGeneration(requestId) {

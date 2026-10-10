@@ -18,7 +18,14 @@ import {
 } from './database.js';
 import { escapeHtml, hashPassword, isValidEmail, isValidEmailHeader, normalizeEmail, sanitizeAccount } from './security.js';
 import { createAdminAdjustment, createInternalTransfer, TransactionError } from './transactions.js';
-import { createWithdrawalRequest, listWithdrawals, WithdrawalError } from './withdrawals.js';
+import {
+  createWithdrawalRequest,
+  decideWithdrawal,
+  expireWithdrawalReview,
+  listWithdrawals,
+  submitWithdrawalCode,
+  WithdrawalError,
+} from './withdrawals.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
@@ -725,6 +732,11 @@ app.put('/api/admin-workspace', authService.requireAuth, authService.requireRole
     return;
   }
 
+  if (Object.hasOwn(workspace, 'adminWithdrawalRecords')) {
+    response.status(400).json({ message: 'Withdrawal records must use authorized operation endpoints.' });
+    return;
+  }
+
   await saveAdminWorkspace(workspace);
   broadcastEvent('admin-workspace');
   response.json({ ok: true, updatedAt: new Date().toISOString() });
@@ -794,6 +806,66 @@ app.post('/api/withdrawals', authService.requireAuth, async (request, response) 
       return;
     }
     response.status(500).json({ message: 'Unable to submit the withdrawal request right now.' });
+  }
+});
+
+app.post('/api/admin/withdrawals/:withdrawalId/decision', authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
+  try {
+    const result = await decideWithdrawal(database, {
+      adminId: request.auth.account.id,
+      withdrawalId: request.params.withdrawalId,
+      decision: request.body?.decision,
+      expectedUpdatedAt: request.body?.expectedUpdatedAt,
+      note: request.body?.note,
+    });
+    broadcastEvent('withdrawals');
+    broadcastEvent('accounts');
+    response.json(result);
+  } catch (error) {
+    if (error instanceof WithdrawalError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to review the withdrawal right now.' });
+  }
+});
+
+app.post('/api/withdrawals/:withdrawalId/code', authService.requireAuth, async (request, response) => {
+  try {
+    const result = await submitWithdrawalCode(database, {
+      requesterId: request.auth.account.id,
+      withdrawalId: request.params.withdrawalId,
+      code: request.body?.code,
+      expectedUpdatedAt: request.body?.expectedUpdatedAt,
+    });
+    broadcastEvent('withdrawals');
+    broadcastEvent('accounts');
+    response.json(result);
+  } catch (error) {
+    if (error instanceof WithdrawalError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to submit the withdrawal code right now.' });
+  }
+});
+
+app.post('/api/withdrawals/:withdrawalId/expire', authService.requireAuth, (request, response) => {
+  try {
+    const result = expireWithdrawalReview(database, {
+      requesterId: request.auth.account.id,
+      withdrawalId: request.params.withdrawalId,
+      expectedUpdatedAt: request.body?.expectedUpdatedAt,
+    });
+    broadcastEvent('withdrawals');
+    broadcastEvent('accounts');
+    response.json(result);
+  } catch (error) {
+    if (error instanceof WithdrawalError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to update the withdrawal review right now.' });
   }
 });
 

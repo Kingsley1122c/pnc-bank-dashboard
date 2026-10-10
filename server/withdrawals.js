@@ -1,4 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
+
+import { hashPassword, verifyPassword } from './security.js';
+
+const REVIEW_WINDOW_MS = 5 * 60 * 1000;
 
 export class WithdrawalError extends Error {
   constructor(status, code, message) {
@@ -48,6 +52,36 @@ function findWithdrawal(db, id) {
     LEFT JOIN users ON users.id = withdrawal_requests.requester_user_id
     WHERE withdrawal_requests.id = ?
   `).get(id);
+}
+
+function parseRaw(row) {
+  try {
+    return JSON.parse(row.raw_json || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function requireExpectedUpdate(value) {
+  const expectedUpdatedAt = String(value ?? '').trim();
+  if (!expectedUpdatedAt) {
+    throw new WithdrawalError(400, 'VERSION_REQUIRED', 'The withdrawal version is required. Refresh and try again.');
+  }
+  return expectedUpdatedAt;
+}
+
+function insertNotification(db, { id, userId, eventType, title, message, createdAt, metadata }) {
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, event_type, title, message, idempotency_key, created_at, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, eventType, title, message, `notification:${id}`, createdAt, JSON.stringify(metadata));
+}
+
+function insertAudit(db, { actorUserId, action, withdrawalId, details, createdAt }) {
+  db.prepare(`
+    INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at)
+    VALUES (?, ?, 'withdrawal', ?, ?, ?)
+  `).run(actorUserId, action, withdrawalId, JSON.stringify(details), createdAt);
 }
 
 export function listWithdrawals(db, { requesterId = null } = {}) {
@@ -119,4 +153,162 @@ export function createWithdrawalRequest(db, { requesterId, bankId, amount, messa
     }
     throw error;
   }
+}
+
+export async function decideWithdrawal(db, { adminId, withdrawalId, decision, expectedUpdatedAt, note = '' }) {
+  const normalizedDecision = String(decision ?? '').trim().toLowerCase();
+  if (!['approve', 'reject'].includes(normalizedDecision)) {
+    throw new WithdrawalError(400, 'INVALID_DECISION', 'Choose approve or reject.');
+  }
+  const expectedVersion = requireExpectedUpdate(expectedUpdatedAt);
+  const normalizedNote = String(note ?? '').trim().slice(0, 500);
+  const approvalCode = normalizedDecision === 'approve' ? `PNC-${randomInt(100000, 1000000)}` : null;
+  const approvalCodeHash = approvalCode ? await hashPassword(approvalCode) : null;
+
+  const execute = db.transaction(() => {
+    const admin = db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('admin', 'owner') AND status != 'Suspended'").get(adminId);
+    if (!admin) throw new WithdrawalError(403, 'ADMIN_REQUIRED', 'Administrator authorization is required.');
+
+    const row = findWithdrawal(db, withdrawalId);
+    if (!row) throw new WithdrawalError(404, 'WITHDRAWAL_NOT_FOUND', 'Withdrawal request not found.');
+    if (row.requester_user_id === adminId) throw new WithdrawalError(403, 'SELF_REVIEW_FORBIDDEN', 'You cannot review your own withdrawal request.');
+    if (row.status !== 'Pending' || row.updated_at !== expectedVersion) {
+      throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and review its current status.');
+    }
+
+    const createdAt = new Date().toISOString();
+    const status = normalizedDecision === 'approve' ? 'Approved' : 'Rejected';
+    const raw = { ...parseRaw(row), reviewerNote: normalizedNote, reviewedBy: adminId, reviewedAt: createdAt };
+    const result = db.prepare(`
+      UPDATE withdrawal_requests
+      SET status = ?, approval_code_hash = ?, updated_at = ?, raw_json = ?
+      WHERE id = ? AND status = 'Pending' AND updated_at = ?
+    `).run(status, approvalCodeHash, createdAt, JSON.stringify(raw), withdrawalId, expectedVersion);
+    if (result.changes !== 1) throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and try again.');
+
+    const message = normalizedDecision === 'approve'
+      ? `Withdrawal ${withdrawalId} was approved. Contact support for the secure withdrawal code.`
+      : `Withdrawal ${withdrawalId} was rejected. No payout was completed and no funds were debited.`;
+    insertNotification(db, {
+      id: `NOTICE-${withdrawalId}-${normalizedDecision}`,
+      userId: row.requester_user_id,
+      eventType: `withdrawal-${status.toLowerCase()}`,
+      title: `Withdrawal ${status.toLowerCase()}`,
+      message,
+      createdAt,
+      metadata: { withdrawalId, status },
+    });
+    insertAudit(db, {
+      actorUserId: adminId,
+      action: `withdrawal.${status.toLowerCase()}`,
+      withdrawalId,
+      details: { requesterUserId: row.requester_user_id, note: normalizedNote },
+      createdAt,
+    });
+
+    return { request: formatWithdrawal(findWithdrawal(db, withdrawalId)), approvalCode };
+  });
+
+  return execute.immediate();
+}
+
+export async function submitWithdrawalCode(db, { requesterId, withdrawalId, code, expectedUpdatedAt, now = () => Date.now() }) {
+  const normalizedCode = String(code ?? '').trim().toUpperCase();
+  if (!/^PNC-\d{6}$/.test(normalizedCode)) {
+    throw new WithdrawalError(400, 'INVALID_CODE', 'Enter a valid withdrawal code.');
+  }
+  const expectedVersion = requireExpectedUpdate(expectedUpdatedAt);
+  const row = findWithdrawal(db, withdrawalId);
+  if (!row || row.requester_user_id !== requesterId) {
+    throw new WithdrawalError(404, 'WITHDRAWAL_NOT_FOUND', 'Withdrawal request not found.');
+  }
+  if (row.status !== 'Approved' || row.updated_at !== expectedVersion) {
+    throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and try again.');
+  }
+  if (!row.approval_code_hash || !(await verifyPassword(normalizedCode, row.approval_code_hash))) {
+    throw new WithdrawalError(400, 'INVALID_CODE', 'Invalid withdrawal code. Please check and try again.');
+  }
+
+  const execute = db.transaction(() => {
+    const current = findWithdrawal(db, withdrawalId);
+    if (!current || current.requester_user_id !== requesterId || current.status !== 'Approved' || current.updated_at !== expectedVersion) {
+      throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and try again.');
+    }
+
+    const enteredAtMs = now();
+    const enteredAt = new Date(enteredAtMs).toISOString();
+    const expectedFailureAt = new Date(enteredAtMs + REVIEW_WINDOW_MS).toISOString();
+    const raw = { ...parseRaw(current), payoutState: 'Code Entered', codeEnteredAt: enteredAt, expectedFailureAt, failureReason: '' };
+    const result = db.prepare(`
+      UPDATE withdrawal_requests
+      SET status = 'Pending', approval_code_hash = NULL, updated_at = ?, raw_json = ?
+      WHERE id = ? AND requester_user_id = ? AND status = 'Approved' AND updated_at = ?
+    `).run(enteredAt, JSON.stringify(raw), withdrawalId, requesterId, expectedVersion);
+    if (result.changes !== 1) throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and try again.');
+
+    insertNotification(db, {
+      id: `NOTICE-${withdrawalId}-code-entered`,
+      userId: requesterId,
+      eventType: 'withdrawal-code-entered',
+      title: 'Withdrawal code received',
+      message: `Code received for ${withdrawalId}. The withdrawal remains pending for compliance review.`,
+      createdAt: enteredAt,
+      metadata: { withdrawalId, expectedFailureAt },
+    });
+    insertAudit(db, {
+      actorUserId: requesterId,
+      action: 'withdrawal.code-submitted',
+      withdrawalId,
+      details: { expectedFailureAt },
+      createdAt: enteredAt,
+    });
+    return { request: formatWithdrawal(findWithdrawal(db, withdrawalId)) };
+  });
+
+  return execute.immediate();
+}
+
+export function expireWithdrawalReview(db, { requesterId, withdrawalId, expectedUpdatedAt, now = () => Date.now() }) {
+  const expectedVersion = requireExpectedUpdate(expectedUpdatedAt);
+  const execute = db.transaction(() => {
+    const row = findWithdrawal(db, withdrawalId);
+    if (!row || row.requester_user_id !== requesterId) {
+      throw new WithdrawalError(404, 'WITHDRAWAL_NOT_FOUND', 'Withdrawal request not found.');
+    }
+    const raw = parseRaw(row);
+    const deadline = new Date(raw.expectedFailureAt ?? '').getTime();
+    if (row.status !== 'Pending' || !raw.codeEnteredAt || row.updated_at !== expectedVersion) {
+      throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and try again.');
+    }
+    if (!Number.isFinite(deadline) || now() < deadline) {
+      throw new WithdrawalError(409, 'REVIEW_NOT_EXPIRED', 'This withdrawal is still under compliance review.');
+    }
+
+    const failedAt = new Date(now()).toISOString();
+    const nextRaw = { ...raw, failedAt, payoutState: 'Failed', failureReason: 'Compliance timeout' };
+    const result = db.prepare(`
+      UPDATE withdrawal_requests SET status = 'Failed', updated_at = ?, raw_json = ?
+      WHERE id = ? AND requester_user_id = ? AND status = 'Pending' AND updated_at = ?
+    `).run(failedAt, JSON.stringify(nextRaw), withdrawalId, requesterId, expectedVersion);
+    if (result.changes !== 1) throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and try again.');
+
+    insertNotification(db, {
+      id: `NOTICE-${withdrawalId}-failed`,
+      userId: requesterId,
+      eventType: 'withdrawal-failed',
+      title: 'Withdrawal failed',
+      message: `Withdrawal ${withdrawalId} failed after pending review. No payout was completed and your funds remain available.`,
+      createdAt: failedAt,
+      metadata: { withdrawalId, failedAt },
+    });
+    insertAudit(db, {
+      actorUserId: requesterId,
+      action: 'withdrawal.failed',
+      withdrawalId,
+      details: { reason: 'Compliance timeout' },
+      createdAt: failedAt,
+    });
+    return { request: formatWithdrawal(findWithdrawal(db, withdrawalId)) };
+  });
+  return execute.immediate();
 }

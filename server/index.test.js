@@ -131,6 +131,12 @@ test('account API requires a session and never returns password material', async
   });
   assert.equal(adminLoginResponse.status, 200);
   const adminCookie = adminLoginResponse.headers.get('set-cookie')?.split(';')[0];
+  const forgedWorkspaceResponse = await fetch(`${baseUrl}/api/admin-workspace`, {
+    method: 'PUT',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace: { adminWithdrawalRecords: [{ id: withdrawal.request.id, status: 'Approved' }] } }),
+  });
+  assert.equal(forgedWorkspaceResponse.status, 400);
   const adminAccountsResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { Cookie: adminCookie } });
   assert.equal(adminAccountsResponse.status, 200);
   const adminAccounts = (await adminAccountsResponse.json()).accounts;
@@ -138,6 +144,32 @@ test('account API requires a session and never returns password material', async
   assert.ok(adminAccounts.some((account) => account.id === registered.user.id));
   const adminWithdrawalsResponse = await fetch(`${baseUrl}/api/withdrawals`, { headers: { Cookie: adminCookie } });
   assert.ok((await adminWithdrawalsResponse.json()).withdrawals.some((entry) => entry.id === withdrawal.request.id));
+  const customerDecisionResponse = await fetch(`${baseUrl}/api/admin/withdrawals/${withdrawal.request.id}/decision`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision: 'approve', expectedUpdatedAt: withdrawal.request.updatedAt }),
+  });
+  assert.equal(customerDecisionResponse.status, 403);
+  const approvalResponse = await fetch(`${baseUrl}/api/admin/withdrawals/${withdrawal.request.id}/decision`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision: 'approve', expectedUpdatedAt: withdrawal.request.updatedAt }),
+  });
+  assert.equal(approvalResponse.status, 200);
+  const approval = await approvalResponse.json();
+  assert.match(approval.approvalCode, /^PNC-\d{6}$/);
+  const foreignCodeResponse = await fetch(`${baseUrl}/api/withdrawals/${withdrawal.request.id}/code`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: approval.approvalCode, expectedUpdatedAt: approval.request.updatedAt }),
+  });
+  assert.equal(foreignCodeResponse.status, 404);
+  const codeResponse = await fetch(`${baseUrl}/api/withdrawals/${withdrawal.request.id}/code`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: approval.approvalCode, expectedUpdatedAt: approval.request.updatedAt }),
+  });
+  assert.equal(codeResponse.status, 200);
   const adjustmentResponse = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'approved-adjustment-0001' },
