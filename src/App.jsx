@@ -1305,6 +1305,10 @@ function getAdminBalanceAdjustmentApiUrl() {
   return `${getSharedApiBaseUrl()}/api/admin/balance-adjustments`;
 }
 
+function getWithdrawalsApiUrl() {
+  return `${getSharedApiBaseUrl()}/api/withdrawals`;
+}
+
 function getSharedEventsApiUrl() {
   return `${getSharedApiBaseUrl()}/api/events`;
 }
@@ -1400,6 +1404,36 @@ async function requestAdminBalanceAdjustment(adjustment, idempotencyKey) {
 
   if (!response.ok) {
     throw new Error(payload.message ?? 'Unable to post the balance adjustment right now.');
+  }
+
+  return payload;
+}
+
+async function fetchRemoteWithdrawals() {
+  const response = await fetch(getWithdrawalsApiUrl(), { credentials: 'include' });
+  const payload = await readApiPayload(response);
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? 'Unable to load withdrawal requests right now.');
+  }
+
+  return Array.isArray(payload.withdrawals) ? payload.withdrawals : [];
+}
+
+async function requestWithdrawal(withdrawal, idempotencyKey) {
+  const response = await fetch(getWithdrawalsApiUrl(), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: JSON.stringify(withdrawal),
+  });
+  const payload = await readApiPayload(response);
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? 'Unable to submit the withdrawal request right now.');
   }
 
   return payload;
@@ -1723,6 +1757,13 @@ function syncAdminUserRecordsWithAccounts(currentRecords, accounts) {
   );
 
   return [...accountRecords, ...standaloneRecords];
+}
+
+function mergeWithdrawalRecords(currentRecords, workspaceRecords) {
+  const currentById = new Map(currentRecords.map((record) => [record.id, record]));
+  const mergedWorkspaceRecords = workspaceRecords.map((record) => ({ ...currentById.get(record.id), ...record }));
+  const workspaceIds = new Set(workspaceRecords.map((record) => record.id));
+  return [...mergedWorkspaceRecords, ...currentRecords.filter((record) => !workspaceIds.has(record.id))];
 }
 
 function getDefaultAdminTransactionRecords() {
@@ -2166,7 +2207,7 @@ function App() {
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
-        setAdminWithdrawalRecords(remoteWorkspace.adminWithdrawalRecords);
+        setAdminWithdrawalRecords((current) => mergeWithdrawalRecords(current, remoteWorkspace.adminWithdrawalRecords));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
         setAdminNotificationRecords(remoteWorkspace.adminNotificationRecords);
         setAdminActivityRecords(remoteWorkspace.adminActivityRecords);
@@ -2215,6 +2256,28 @@ function App() {
       window.clearInterval(intervalId);
     };
   }, [remoteAccountsReady, serverAuthenticated]);
+
+  useEffect(() => {
+    if (!serverAuthenticated) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadWithdrawals() {
+      try {
+        const remoteWithdrawals = await fetchRemoteWithdrawals();
+        if (!cancelled) setAdminWithdrawalRecords(remoteWithdrawals);
+      } catch {
+        return;
+      }
+    }
+
+    loadWithdrawals();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUser?.role, serverAuthenticated]);
 
   useEffect(() => {
     setAdminUserRecords((current) => syncAdminUserRecordsWithAccounts(current, accounts));
@@ -2396,7 +2459,7 @@ function App() {
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, accounts));
-        setAdminWithdrawalRecords(remoteWorkspace.adminWithdrawalRecords);
+        setAdminWithdrawalRecords((current) => mergeWithdrawalRecords(current, remoteWorkspace.adminWithdrawalRecords));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
         setAdminNotificationRecords(remoteWorkspace.adminNotificationRecords);
         setAdminActivityRecords(remoteWorkspace.adminActivityRecords);
@@ -2444,7 +2507,7 @@ function App() {
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
-        setAdminWithdrawalRecords(remoteWorkspace.adminWithdrawalRecords);
+        setAdminWithdrawalRecords((current) => mergeWithdrawalRecords(current, remoteWorkspace.adminWithdrawalRecords));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
         setAdminNotificationRecords(remoteWorkspace.adminNotificationRecords);
         setAdminActivityRecords(remoteWorkspace.adminActivityRecords);
@@ -2454,6 +2517,14 @@ function App() {
         setAdminSettings(remoteWorkspace.adminSettings);
         setAdminExportHistory(remoteWorkspace.adminExportHistory);
         setSelectedUser(remoteWorkspace.selectedUser);
+      } catch {
+        return;
+      }
+    }
+
+    async function refreshWithdrawals() {
+      try {
+        setAdminWithdrawalRecords(await fetchRemoteWithdrawals());
       } catch {
         return;
       }
@@ -2469,6 +2540,10 @@ function App() {
 
         if (payload.type === 'admin-workspace' && activeUser?.role === 'admin') {
           refreshAdminWorkspace();
+        }
+
+        if (payload.type === 'withdrawals') {
+          refreshWithdrawals();
         }
       } catch {
         return;
@@ -3053,7 +3128,7 @@ function App() {
     };
   }
 
-  function handleSubmitWithdrawalRequest(withdrawalForm) {
+  async function handleSubmitWithdrawalRequest(withdrawalForm) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Withdrawal requests are only available for users.' };
     }
@@ -3069,31 +3144,22 @@ function App() {
       return { ok: false, message: 'Enter a valid withdrawal amount.' };
     }
 
-    const requestId = `WD-${Math.floor(1000 + Math.random() * 9000)}`;
-    const supportMessage = buildWithdrawalSupportMessage({
-      userName: activeUser.name,
-      amount: formatCurrency(amountValue),
-      bankName: selectedBank.bankName,
-      accountNumber: selectedBank.accountNumber,
-      requestId,
-      note: withdrawalForm.message.trim(),
-    });
+    let nextRequest;
+    try {
+      const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `withdrawal-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const result = await requestWithdrawal({
+        bankId: selectedBank.id,
+        amount: withdrawalForm.amount,
+        message: withdrawalForm.message.trim(),
+      }, idempotencyKey);
+      nextRequest = result.request;
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to submit the withdrawal request right now.' };
+    }
 
-    const nextRequest = {
-      id: requestId,
-      amount: formatCurrency(amountValue),
-      destination: `${selectedBank.bankName} • ${selectedBank.accountNumber}`,
-      requested: getDisplayDate(),
-      status: 'Pending',
-      code: 'Awaiting approval',
-      requesterId: activeUser.id,
-      requesterName: activeUser.name,
-      supportMessage,
-    };
-
-    setAdminWithdrawalRecords((current) => [nextRequest, ...current]);
+    setAdminWithdrawalRecords((current) => current.some((request) => request.id === nextRequest.id) ? current : [nextRequest, ...current]);
     setAdminNotice(`New withdrawal request received from ${activeUser.name}.`);
-    pushAdminActivity(`${activeUser.name} submitted withdrawal request ${requestId}.`, { promoteToLiveFeed: true });
+    pushAdminActivity(`${activeUser.name} submitted withdrawal request ${nextRequest.id}.`, { promoteToLiveFeed: true });
 
     return {
       ok: true,

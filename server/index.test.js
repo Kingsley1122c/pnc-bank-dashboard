@@ -92,6 +92,19 @@ test('account API requires a session and never returns password material', async
   assert.equal(replay.transactionId, transfer.transactionId);
   assert.equal(replay.sender.accounts.find((account) => account.label === 'Savings').amount, 72931.67);
 
+  const requester = accountsPayload.accounts[0];
+  const withdrawalResponse = await fetch(`${baseUrl}/api/withdrawals`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'server-test-withdrawal-0001' },
+    body: JSON.stringify({ bankId: requester.savedBanks[0].id, amount: '12.50', message: 'Integration test' }),
+  });
+  assert.equal(withdrawalResponse.status, 201);
+  const withdrawal = await withdrawalResponse.json();
+  assert.equal(withdrawal.request.requesterId, 'USR-0001');
+  assert.equal(withdrawal.request.amountValue, 12.5);
+  const userWithdrawalsResponse = await fetch(`${baseUrl}/api/withdrawals`, { headers: { Cookie: sessionCookie } });
+  assert.deepEqual((await userWithdrawalsResponse.json()).withdrawals.map((entry) => entry.id), [withdrawal.request.id]);
+
   const deniedAdjustment = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'denied-adjustment-0001' },
@@ -111,6 +124,8 @@ test('account API requires a session and never returns password material', async
   const adminAccounts = (await adminAccountsResponse.json()).accounts;
   assert.ok(adminAccounts.some((account) => account.id === 'USR-0001'));
   assert.ok(adminAccounts.some((account) => account.id === registered.user.id));
+  const adminWithdrawalsResponse = await fetch(`${baseUrl}/api/withdrawals`, { headers: { Cookie: adminCookie } });
+  assert.ok((await adminWithdrawalsResponse.json()).withdrawals.some((entry) => entry.id === withdrawal.request.id));
   const adjustmentResponse = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'approved-adjustment-0001' },

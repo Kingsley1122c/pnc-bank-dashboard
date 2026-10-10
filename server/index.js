@@ -18,6 +18,7 @@ import {
 } from './database.js';
 import { hashPassword, isValidEmail, normalizeEmail, sanitizeAccount } from './security.js';
 import { createAdminAdjustment, createInternalTransfer, TransactionError } from './transactions.js';
+import { createWithdrawalRequest, listWithdrawals, WithdrawalError } from './withdrawals.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
@@ -709,6 +710,31 @@ app.post('/api/admin/balance-adjustments', authService.requireAuth, authService.
       return;
     }
     response.status(500).json({ message: 'Unable to post the balance adjustment right now.' });
+  }
+});
+
+app.get('/api/withdrawals', authService.requireAuth, (request, response) => {
+  const requesterId = request.auth.account.role === 'admin' ? null : request.auth.account.id;
+  response.json({ withdrawals: listWithdrawals(database, { requesterId }), updatedAt: new Date().toISOString() });
+});
+
+app.post('/api/withdrawals', authService.requireAuth, async (request, response) => {
+  try {
+    const result = createWithdrawalRequest(database, {
+      requesterId: request.auth.account.id,
+      bankId: request.body?.bankId,
+      amount: request.body?.amount,
+      message: request.body?.message,
+      idempotencyKey: request.get('Idempotency-Key'),
+    });
+    broadcastEvent('withdrawals');
+    response.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    if (error instanceof WithdrawalError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to submit the withdrawal request right now.' });
   }
 });
 
