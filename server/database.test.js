@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import Database from 'better-sqlite3';
+
 import { closeDatabase, getMigrationStatus, initializeDatabase, readDatabaseAccounts } from './database.js';
 
 async function writeFixture(directory) {
@@ -16,7 +18,7 @@ async function writeFixture(directory) {
     },
     {
       id: 'ADM-1000', role: 'admin', status: 'Active', verificationStatus: 'Verified', name: 'Migration Admin',
-      email: 'admin-migration@example.com', phone: '+15550001001', password: 'admin-pass', accounts: [], notifications: [], savedBanks: [], issuedCards: [],
+      email: 'admin-migration@example.com', phone: '+15550001000', password: 'admin-pass', accounts: [], notifications: [], savedBanks: [], issuedCards: [],
     },
   ], null, 2));
   await writeFile(path.join(directory, 'admin-workspace.json'), JSON.stringify({
@@ -78,4 +80,23 @@ test('invalid JSON data aborts without creating imported users', async () => {
   await writeFile(path.join(directory, 'admin-workspace.json'), '{}');
 
   await assert.rejects(() => initializeDatabase({ dataDir: directory }), /Duplicate account email/);
+});
+
+test('migration retry repairs the empty schema created before shared legacy phones were supported', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'pnc-db-'));
+  await writeFixture(directory);
+  const databaseFile = path.join(directory, 'pnc-bank.sqlite');
+  const schema = await readFile(path.resolve('server', 'database', 'schema.sql'), 'utf8');
+  const partialDatabase = new Database(databaseFile);
+  partialDatabase.exec(schema.replace('phone TEXT COLLATE NOCASE,', 'phone TEXT COLLATE NOCASE UNIQUE,'));
+  partialDatabase.close();
+
+  const db = await initializeDatabase({ dataDir: directory, databaseFile });
+  try {
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM users').get().count, 2);
+    assert.equal(db.prepare('SELECT COUNT(DISTINCT phone) AS count FROM users').get().count, 1);
+    assert.doesNotMatch(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get().sql, /phone\s+TEXT\s+COLLATE\s+NOCASE\s+UNIQUE/i);
+  } finally {
+    closeDatabase(db);
+  }
 });

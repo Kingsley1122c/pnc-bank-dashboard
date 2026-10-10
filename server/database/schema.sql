@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
   verification_status TEXT NOT NULL,
   name TEXT NOT NULL,
   email TEXT NOT NULL COLLATE NOCASE UNIQUE,
-  phone TEXT COLLATE NOCASE UNIQUE,
+  phone TEXT COLLATE NOCASE,
   password_hash TEXT NOT NULL,
   segment TEXT,
   avatar TEXT,

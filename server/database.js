@@ -242,6 +242,50 @@ function insertImportedData(db, preparedAccounts, workspace, sessions, sources, 
   `).run(JSON_IMPORT_KEY, digest, backupDirectory, JSON.stringify({ users: preparedAccounts.length }), now, now);
 }
 
+function removeLegacyPhoneUniqueConstraint(db) {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
+  if (!/phone\s+TEXT\s+COLLATE\s+NOCASE\s+UNIQUE/i.test(table?.sql ?? '')) return;
+
+  const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
+  if (userCount !== 0) throw new Error('Cannot repair the legacy phone constraint after users have been imported.');
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE users_rebuilt (
+        id TEXT PRIMARY KEY,
+        role TEXT NOT NULL CHECK (role IN ('user', 'admin', 'owner')),
+        status TEXT NOT NULL,
+        verification_status TEXT NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        phone TEXT COLLATE NOCASE,
+        password_hash TEXT NOT NULL,
+        segment TEXT,
+        avatar TEXT,
+        avatar_image TEXT,
+        date_of_birth TEXT,
+        gender TEXT,
+        account_number TEXT UNIQUE,
+        routing_number TEXT,
+        raw_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      DROP TABLE users;
+      ALTER TABLE users_rebuilt RENAME TO users;
+      CREATE INDEX idx_users_status_role ON users(status, role);
+      COMMIT;
+    `);
+  } catch (error) {
+    if (db.inTransaction) db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
+
 export async function initializeDatabase({ dataDir, databaseFile = path.join(dataDir, 'pnc-bank.sqlite'), allowEmptyImport = process.env.NODE_ENV !== 'production' }) {
   await mkdir(dataDir, { recursive: true });
   const schema = await readFile(schemaFile, 'utf8');
@@ -253,7 +297,9 @@ export async function initializeDatabase({ dataDir, databaseFile = path.join(dat
     db.pragma('synchronous = FULL');
     db.pragma('busy_timeout = 5000');
     db.exec(schema);
+    removeLegacyPhoneUniqueConstraint(db);
     db.prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, ?)').run(isoNow());
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, ?)').run(isoNow());
 
     const accountsSource = await readJsonSource('accounts.json', path.join(dataDir, 'accounts.json'), []);
     const workspaceSource = await readJsonSource('admin-workspace.json', path.join(dataDir, 'admin-workspace.json'), {});
