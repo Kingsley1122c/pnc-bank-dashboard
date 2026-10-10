@@ -77,6 +77,20 @@ export function isValidEmail(value) {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+export function isValidEmailHeader(value, maxLength = 160) {
+  const text = String(value ?? '').trim();
+  return text.length > 0 && text.length <= maxLength && !/[\r\n]/.test(text);
+}
+
 export function isValidPublicUrl(value) {
   try {
     const url = new URL(value);

@@ -16,7 +16,7 @@ import {
   saveDatabaseAdminWorkspace,
   updateDatabaseAccountPassword,
 } from './database.js';
-import { hashPassword, isValidEmail, normalizeEmail, sanitizeAccount } from './security.js';
+import { escapeHtml, hashPassword, isValidEmail, isValidEmailHeader, normalizeEmail, sanitizeAccount } from './security.js';
 import { createAdminAdjustment, createInternalTransfer, TransactionError } from './transactions.js';
 import { createWithdrawalRequest, listWithdrawals, WithdrawalError } from './withdrawals.js';
 
@@ -135,6 +135,17 @@ function getEmailFromAddress() {
   return process.env.EMAIL_FROM?.trim() || 'no-reply@pnc.bank';
 }
 
+function getEmailMode() {
+  const mode = String(process.env.EMAIL_MODE ?? 'disabled').trim().toLowerCase();
+  return ['disabled', 'restricted', 'live'].includes(mode) ? mode : 'disabled';
+}
+
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) return null;
+  return { apiKey, from: getEmailFromAddress() };
+}
+
 function getSmtpConfig() {
   const host = process.env.SMTP_HOST?.trim();
   const user = process.env.SMTP_USER?.trim();
@@ -205,6 +216,44 @@ async function getSendGridClient() {
 }
 
 async function getMailClient() {
+  const mode = getEmailMode();
+  if (mode === 'disabled') return null;
+
+  const replyTo = process.env.EMAIL_REPLY_TO?.trim();
+  const testRecipient = normalizeEmail(process.env.EMAIL_TEST_RECIPIENT);
+  const restrictSend = (send) => async (message) => {
+    if (mode === 'restricted' && (!testRecipient || normalizeEmail(message.to) !== testRecipient)) {
+      throw new Error('Restricted email recipient rejected.');
+    }
+    return send(replyTo ? { ...message, replyTo } : message);
+  };
+  const resendConfig = getResendConfig();
+
+  if (resendConfig) {
+    return {
+      from: resendConfig.from,
+      send: restrictSend(async (message) => {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${resendConfig.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: resendConfig.from,
+            to: [message.to],
+            subject: message.subject,
+            text: message.text,
+            html: message.html,
+            ...(message.replyTo ? { reply_to: message.replyTo } : {}),
+          }),
+        });
+        if (!response.ok) throw new Error('Resend delivery failed.');
+        return response.json();
+      }),
+    };
+  }
+
   const smtpConfig = getSmtpConfig();
 
   if (smtpConfig) {
@@ -223,10 +272,10 @@ async function getMailClient() {
 
       return {
         from: smtpConfig.from,
-        send: (message) => transporter.sendMail({
+        send: restrictSend((message) => transporter.sendMail({
           from: smtpConfig.from,
           ...message,
-        }),
+        })),
       };
     }
   }
@@ -238,10 +287,10 @@ async function getMailClient() {
 
   return {
     from: sendGridClient.from,
-    send: (message) => sendGridClient.sgMail.send({
+    send: restrictSend((message) => sendGridClient.sgMail.send({
       from: sendGridClient.from,
       ...message,
-    }),
+    })),
   };
 }
 
@@ -256,6 +305,8 @@ async function sendWelcomeEmail({ name, email, accountNumber }) {
   }
 
   const formattedAccountNumber = formatAccountNumber(accountNumber);
+  const safeName = escapeHtml(name);
+  const safeAccountNumber = escapeHtml(formattedAccountNumber);
   const subject = 'Welcome to PNC Bank';
   const text = [
     `Hello ${name},`,
@@ -273,9 +324,9 @@ async function sendWelcomeEmail({ name, email, accountNumber }) {
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
       <h2 style="margin-bottom: 12px;">Welcome to PNC Bank</h2>
-      <p>Hello ${name},</p>
+      <p>Hello ${safeName},</p>
       <p>Your PNC Bank account has been created successfully.</p>
-      <p><strong>Account number:</strong> ${formattedAccountNumber}<br /><strong>Routing number:</strong> 031100089</p>
+      <p><strong>Account number:</strong> ${safeAccountNumber}<br /><strong>Routing number:</strong> 031100089</p>
       <p>Your account may require verification before certain incoming transfers can be released.</p>
       <p>If you need help, contact customer support.</p>
       <p style="margin-top: 24px;">PNC Bank</p>
@@ -307,6 +358,11 @@ async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toA
   }
 
   const subject = 'You have received a transfer';
+  const safeName = escapeHtml(name);
+  const safeAmount = escapeHtml(amount);
+  const safeFromAccount = escapeHtml(fromAccount);
+  const safeToAccount = escapeHtml(toAccount);
+  const safeTransferDate = escapeHtml(transferDate);
   const text = [
     `Hello ${name},`,
     '',
@@ -322,10 +378,10 @@ async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toA
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
       <h2 style="margin-bottom: 12px;">You have received a transfer</h2>
-      <p>Hello ${name},</p>
-      <p>You have received a transfer of <strong>$${amount}</strong> to your account (<strong>${toAccount}</strong>).</p>
-      ${fromAccount ? `<p><strong>From:</strong> ${fromAccount}</p>` : ''}
-      ${transferDate ? `<p><strong>Date:</strong> ${transferDate}</p>` : ''}
+      <p>Hello ${safeName},</p>
+      <p>You have received a transfer of <strong>$${safeAmount}</strong> to your account (<strong>${safeToAccount}</strong>).</p>
+      ${fromAccount ? `<p><strong>From:</strong> ${safeFromAccount}</p>` : ''}
+      ${transferDate ? `<p><strong>Date:</strong> ${safeTransferDate}</p>` : ''}
       <p>If you have any questions, contact customer support.</p>
       <p style="margin-top: 24px;">PNC Bank</p>
     </div>
@@ -356,6 +412,9 @@ async function sendImportantMessageEmail({ name, email, subject, message }) {
   }
 
   const emailSubject = subject || 'Important message from PNC Bank';
+  const safeSubject = escapeHtml(emailSubject);
+  const safeName = escapeHtml(name);
+  const safeMessage = escapeHtml(message).replaceAll('\n', '<br />');
   const text = [
     `Hello ${name},`,
     '',
@@ -368,9 +427,9 @@ async function sendImportantMessageEmail({ name, email, subject, message }) {
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
-      <h2 style="margin-bottom: 12px;">${emailSubject}</h2>
-      <p>Hello ${name},</p>
-      <p>${message}</p>
+      <h2 style="margin-bottom: 12px;">${safeSubject}</h2>
+      <p>Hello ${safeName},</p>
+      <p>${safeMessage}</p>
       <p>If you have any questions, contact customer support.</p>
       <p style="margin-top: 24px;">PNC Bank</p>
     </div>
@@ -741,8 +800,8 @@ app.post('/api/withdrawals', authService.requireAuth, async (request, response) 
 app.post('/api/emails/welcome', emailRateLimit, authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
   const { name, email, accountNumber } = request.body ?? {};
 
-  if (!name || !email || !accountNumber) {
-    response.status(400).json({ ok: false, message: 'Name, email, and account number are required.' });
+  if (!isValidEmailHeader(name, 120) || !isValidEmail(email) || !/^\d{10}$/.test(String(accountNumber ?? '').replace(/\D/g, ''))) {
+    response.status(400).json({ ok: false, message: 'Enter a valid name, email, and 10-digit account number.' });
     return;
   }
 
@@ -755,11 +814,11 @@ app.post('/api/emails/welcome', emailRateLimit, authService.requireAuth, authSer
     }
 
     response.json(result);
-  } catch (error) {
+  } catch {
     response.status(500).json({
       ok: false,
       configured: true,
-      message: error instanceof Error ? error.message : 'Failed to send welcome email.',
+      message: 'Failed to send welcome email.',
     });
   }
 });
@@ -767,8 +826,8 @@ app.post('/api/emails/welcome', emailRateLimit, authService.requireAuth, authSer
 app.post('/api/emails/transfer-received', emailRateLimit, authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
   const { name, email, amount, fromAccount, toAccount, transferDate } = request.body ?? {};
 
-  if (!name || !email || !amount || !toAccount) {
-    response.status(400).json({ ok: false, message: 'Name, email, amount, and toAccount are required.' });
+  if (!isValidEmailHeader(name, 120) || !isValidEmail(email) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount ?? '')) || !isValidEmailHeader(toAccount, 120)) {
+    response.status(400).json({ ok: false, message: 'Enter valid transfer email details.' });
     return;
   }
 
@@ -781,11 +840,11 @@ app.post('/api/emails/transfer-received', emailRateLimit, authService.requireAut
     }
 
     response.json(result);
-  } catch (error) {
+  } catch {
     response.status(500).json({
       ok: false,
       configured: true,
-      message: error instanceof Error ? error.message : 'Failed to send transfer received email.',
+      message: 'Failed to send transfer received email.',
     });
   }
 });
@@ -793,8 +852,9 @@ app.post('/api/emails/transfer-received', emailRateLimit, authService.requireAut
 app.post('/api/emails/important-message', emailRateLimit, authService.requireAuth, async (request, response) => {
   const { name, email, subject, message } = request.body ?? {};
 
-  if (!name || !email || !message) {
-    response.status(400).json({ ok: false, message: 'Name, email, and message are required.' });
+  const normalizedSubject = subject || 'Important message from PNC Bank';
+  if (!isValidEmailHeader(name, 120) || !isValidEmail(email) || !isValidEmailHeader(normalizedSubject) || !String(message ?? '').trim() || String(message).length > 5000) {
+    response.status(400).json({ ok: false, message: 'Enter a valid name, email, subject, and message.' });
     return;
   }
 
@@ -814,11 +874,11 @@ app.post('/api/emails/important-message', emailRateLimit, authService.requireAut
     }
 
     response.json(result);
-  } catch (error) {
+  } catch {
     response.status(500).json({
       ok: false,
       configured: true,
-      message: error instanceof Error ? error.message : 'Failed to send important message email.',
+      message: 'Failed to send important message email.',
     });
   }
 });

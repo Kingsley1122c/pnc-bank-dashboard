@@ -3,9 +3,11 @@ import test from 'node:test';
 
 import {
   createSessionToken,
+  escapeHtml,
   hashPassword,
   hashSessionToken,
   isValidEmail,
+  isValidEmailHeader,
   isValidPublicUrl,
   sanitizeAccount,
   verifyPassword,
@@ -46,4 +48,11 @@ test('email and public URL validation accepts intended deployment values', () =>
   assert.equal(isValidPublicUrl('https://pnc-core.com'), true);
   assert.equal(isValidPublicUrl('http://localhost:5173'), true);
   assert.equal(isValidPublicUrl('javascript:alert(1)'), false);
+});
+
+test('email content helpers escape HTML and reject injected headers', () => {
+  assert.equal(escapeHtml(`<script>alert("x")</script>`), '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;');
+  assert.equal(isValidEmailHeader('Account update'), true);
+  assert.equal(isValidEmailHeader('Account update\r\nBcc: attacker@example.com'), false);
+  assert.equal(isValidEmailHeader('x'.repeat(161)), false);
 });

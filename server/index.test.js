@@ -62,6 +62,18 @@ test('account API requires a session and never returns password material', async
 
   const userWorkspaceResponse = await fetch(`${baseUrl}/api/admin-workspace`, { headers: { Cookie: sessionCookie } });
   assert.equal(userWorkspaceResponse.status, 403);
+  const injectedEmailResponse = await fetch(`${baseUrl}/api/emails/important-message`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Example User', email: 'example@pnc.bank', subject: 'Update\r\nBcc: attacker@example.com', message: 'Account update' }),
+  });
+  assert.equal(injectedEmailResponse.status, 400);
+  const disabledEmailResponse = await fetch(`${baseUrl}/api/emails/important-message`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Example User', email: 'example@pnc.bank', subject: 'Account update', message: 'Account update' }),
+  });
+  assert.equal(disabledEmailResponse.status, 503);
 
   const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
