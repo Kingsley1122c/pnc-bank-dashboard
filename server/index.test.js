@@ -16,9 +16,12 @@ test('account API requires a session and never returns password material', async
 
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
-  const missingAssetResponse = await fetch(`${baseUrl}/assets/missing-build-asset.js`);
+  const missingAssetResponse = await fetch(`${baseUrl}/assets/missing-build-asset.js`, { headers: { Origin: 'https://deployment.example' } });
   assert.equal(missingAssetResponse.status, 404);
   assert.equal(missingAssetResponse.headers.get('cache-control'), 'no-store');
+
+  const disallowedOriginResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { Origin: 'https://attacker.example' } });
+  assert.equal(disallowedOriginResponse.status, 403);
 
   const anonymousResponse = await fetch(`${baseUrl}/api/accounts`);
   assert.equal(anonymousResponse.status, 401);

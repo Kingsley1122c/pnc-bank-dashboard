@@ -472,17 +472,32 @@ const emailRateLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, limit: 30 }
 const allowedOrigins = getAllowedOrigins();
 
 app.disable('x-powered-by');
-app.use(cors({
+app.use('/api', (request, response, next) => cors({
   credentials: true,
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin.replace(/\/$/, ''))) {
+    const normalizedOrigin = origin?.replace(/\/$/, '');
+    let isSameHost = false;
+    try {
+      isSameHost = Boolean(normalizedOrigin) && new URL(normalizedOrigin).host === request.get('host');
+    } catch {
+      isSameHost = false;
+    }
+
+    if (!normalizedOrigin || isSameHost || allowedOrigins.has(normalizedOrigin)) {
       callback(null, true);
       return;
     }
 
     callback(new Error('Origin is not allowed by CORS.'));
   },
-}));
+})(request, response, next));
+app.use('/api', (error, _request, response, next) => {
+  if (error?.message === 'Origin is not allowed by CORS.') {
+    response.status(403).json({ message: error.message });
+    return;
+  }
+  next(error);
+});
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/api/health', (_request, response) => {
