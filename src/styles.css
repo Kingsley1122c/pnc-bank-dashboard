@@ -29,6 +29,7 @@ body,
 
 body {
   min-height: 100vh;
+  font-synthesis: none;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
   padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom));

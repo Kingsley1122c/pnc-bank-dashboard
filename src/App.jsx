@@ -2845,12 +2845,13 @@ function App() {
       }));
       setAdminTransactionRecords((current) => [result.receipt, ...current]);
       setAdminNotice(`Transfer ${result.receipt.id} was authorized by the server.`);
+      const displayedAmount = formatCurrency(Number(transferForm.amount));
       return {
         ok: true,
         receipt: result.receipt,
         message: result.receipt.status === 'Pending Verification'
-          ? `${formatCurrency(Number(transferForm.amount))} was sent to ${result.receipt.name}, but the funds are on hold until PNC verification is complete.`
-          : `${formatCurrency(Number(transferForm.amount))} sent to ${result.receipt.name} from ${transferForm.sourceAccount}.`,
+          ? `${displayedAmount} was sent to ${result.receipt.name}, but the funds are on hold until PNC verification is complete.`
+          : `${displayedAmount} sent to ${result.receipt.name} from ${transferForm.sourceAccount}.`,
       };
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : 'Unable to complete the transfer right now.' };
