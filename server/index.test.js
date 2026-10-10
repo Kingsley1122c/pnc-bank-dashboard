@@ -3,12 +3,16 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 
 test('account API requires a session and never returns password material', async (context) => {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), 'pnc-server-'));
   process.env.DATA_DIR = dataDirectory;
   process.env.NODE_ENV = 'test';
   process.env.APP_BASE_URL = 'http://localhost:5173';
+  process.env.RESEND_API_KEY = 're_test_only';
+  process.env.RESEND_WEBHOOK_SECRET = 'whsec_test_only';
+  process.env.EMAIL_FROM = 'no-reply@example.com';
   const { app } = await import(`./index.js?test=${Date.now()}`);
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
@@ -28,6 +32,12 @@ test('account API requires a session and never returns password material', async
   assert.equal(anonymousResponse.status, 401);
   const anonymousEventsResponse = await fetch(`${baseUrl}/api/events`);
   assert.equal(anonymousEventsResponse.status, 401);
+  const invalidWebhookResponse = await fetch(`${baseUrl}/api/webhooks/resend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'svix-id': 'invalid', 'svix-timestamp': '1', 'svix-signature': 'invalid' },
+    body: JSON.stringify({ id: 'event-invalid', type: 'email.delivered', data: { email_id: 'message-invalid' } }),
+  });
+  assert.equal(invalidWebhookResponse.status, 400);
   const originlessLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -69,13 +79,13 @@ test('account API requires a session and never returns password material', async
     headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: 'Example User', email: 'example@pnc.bank', subject: 'Update\r\nBcc: attacker@example.com', message: 'Account update' }),
   });
-  assert.equal(injectedEmailResponse.status, 400);
+  assert.equal(injectedEmailResponse.status, 410);
   const disabledEmailResponse = await fetch(`${baseUrl}/api/emails/important-message`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: 'Example User', email: 'example@pnc.bank', subject: 'Account update', message: 'Account update' }),
   });
-  assert.equal(disabledEmailResponse.status, 503);
+  assert.equal(disabledEmailResponse.status, 410);
 
   const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
@@ -87,6 +97,39 @@ test('account API requires a session and never returns password material', async
   });
   assert.equal(registerResponse.status, 201);
   const registered = await registerResponse.json();
+  const testDatabase = new Database(path.join(dataDirectory, 'pnc-bank.sqlite'));
+  context.after(() => testDatabase.close());
+  assert.deepEqual(
+    testDatabase.prepare('SELECT template_id FROM email_outbox WHERE recipient_user_id = ? ORDER BY template_id').all(registered.user.id).map((row) => row.template_id),
+    ['email-verification', 'welcome'],
+  );
+  const resetRequest = await fetch(`${baseUrl}/api/auth/request-password-reset`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: registered.user.email }),
+  });
+  const unknownResetRequest = await fetch(`${baseUrl}/api/auth/request-password-reset`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'unknown@example.com' }),
+  });
+  assert.equal(resetRequest.status, 202);
+  assert.equal(unknownResetRequest.status, 202);
+  assert.deepEqual(await resetRequest.json(), await unknownResetRequest.json());
+  const resetJob = testDatabase.prepare("SELECT payload_json FROM email_outbox WHERE recipient_user_id = ? AND template_id = 'password-reset'").get(registered.user.id);
+  const resetToken = new URL(JSON.parse(resetJob.payload_json).actionUrl).searchParams.get('token');
+  assert.ok(resetToken);
+  const resetResponse = await fetch(`${baseUrl}/api/auth/reset-password`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token: resetToken, password: 'replacement-password' }),
+  });
+  assert.equal(resetResponse.status, 200);
+  const reusedResetResponse = await fetch(`${baseUrl}/api/auth/reset-password`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token: resetToken, password: 'another-password' }),
+  });
+  assert.equal(reusedResetResponse.status, 400);
+  assert.equal(testDatabase.prepare("SELECT COUNT(*) count FROM email_outbox WHERE recipient_user_id = ? AND template_id = 'password-changed'").get(registered.user.id).count, 1);
+  const deniedCampaignResponse = await fetch(`${baseUrl}/api/admin/communications`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'denied-campaign-0001' },
+    body: JSON.stringify({ title: 'Denied', message: 'Denied', audienceType: 'selected', recipientIds: [registered.user.id], deliveryMethod: 'email' }),
+  });
+  assert.equal(deniedCampaignResponse.status, 403);
   const idempotencyKey = 'server-test-transfer-0001';
   const transferRequest = {
     method: 'POST',
@@ -133,6 +176,17 @@ test('account API requires a session and never returns password material', async
   });
   assert.equal(adminLoginResponse.status, 200);
   const adminCookie = adminLoginResponse.headers.get('set-cookie')?.split(';')[0];
+  const campaignResponse = await fetch(`${baseUrl}/api/admin/communications`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'approved-campaign-0001' },
+    body: JSON.stringify({ title: 'Account notice', message: 'Controlled integration message', audienceType: 'selected', recipientIds: [registered.user.id], deliveryMethod: 'email' }),
+  });
+  assert.equal(campaignResponse.status, 202);
+  const campaign = await campaignResponse.json();
+  assert.equal(campaign.campaign.recipientCount, 1);
+  const campaignHistoryResponse = await fetch(`${baseUrl}/api/admin/communications`, { headers: { Cookie: adminCookie } });
+  assert.equal(campaignHistoryResponse.status, 200);
+  assert.ok((await campaignHistoryResponse.json()).campaigns.some((entry) => entry.id === campaign.campaign.id));
   const ownershipResponse = await fetch(`${baseUrl}/api/admin/ownership`, { headers: { Cookie: adminCookie } });
   assert.equal(ownershipResponse.status, 200);
   const ownershipState = await ownershipResponse.json();

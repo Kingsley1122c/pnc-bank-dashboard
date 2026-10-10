@@ -20,9 +20,9 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "nodemailer": "10.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "resend": "^6.32.1"
   },
   "devDependencies": {
     "@types/estree": "^1.0.5",

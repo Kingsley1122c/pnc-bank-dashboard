@@ -991,6 +991,22 @@ body {
   justify-content: center;
 }
 
+.auth-text-button {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  color: #80d8ff;
+  padding: 4px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.auth-text-button:hover,
+.auth-text-button:focus-visible {
+  color: #fff;
+  text-decoration: underline;
+}
+
 .mobile-dashboard-shell {
   position: relative;
   z-index: 1;
@@ -3296,7 +3312,9 @@ td span,
 }
 
 .search-box input,
-.input-shell input {
+.input-shell input,
+.input-shell select,
+.input-shell textarea {
   width: 100%;
   border: 0;
   outline: 0;
@@ -3304,9 +3322,23 @@ td span,
   color: var(--text);
 }
 
+.input-shell select option {
+  color: #102a43;
+}
+
+.input-shell textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.5;
+}
+
 .search-box input::placeholder,
 .input-shell input::placeholder {
   color: #6f85a0;
+}
+
+.communication-stat-grid {
+  margin: 18px 0;
 }
 
 .inline-search {

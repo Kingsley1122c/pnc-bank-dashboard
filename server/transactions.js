@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { enqueueEmail } from './email-service.js';
+
 export class TransactionError extends Error {
   constructor(status, code, message) {
     super(message);
@@ -145,12 +147,15 @@ export function createInternalTransfer(db, { senderId, sourceAccount, recipientA
       INSERT INTO notifications (id, user_id, event_type, title, message, idempotency_key, created_at, metadata_json)
       VALUES (?, ?, 'transfer-sent', 'Transfer sent', ?, ?, ?, ?)
     `).run(`NOTICE-SENDER-${transactionId}`, sender.id, `$${(amountMinor / 100).toFixed(2)} sent to ${recipient.name}.`, `notification:${transactionId}:sender`, createdAt, JSON.stringify({ transactionId }));
-    db.prepare(`
-      INSERT INTO email_outbox (
-        idempotency_key, event_type, aggregate_type, aggregate_id, recipient, template_id, payload_json,
-        status, created_at, updated_at
-      ) VALUES (?, 'transfer.received', 'transaction', ?, ?, 'transfer-received', ?, 'pending', ?, ?)
-    `).run(`email:${transactionId}:recipient`, transactionId, recipient.email, JSON.stringify({ name: recipient.name, senderName: sender.name, amount: (amountMinor / 100).toFixed(2), status }), createdAt, createdAt);
+    const emailPayload = { amount: (amountMinor / 100).toFixed(2), currency: 'USD', status, reference: transactionId, occurredAt: createdAt };
+    enqueueEmail(db, {
+      idempotencyKey: `email:${transactionId}:recipient`, eventType: 'transfer.received', aggregateType: 'transaction', aggregateId: transactionId,
+      recipient: recipient.email, recipientUserId: recipient.id, templateId: 'transfer-received', payload: { ...emailPayload, name: recipient.name, senderName: sender.name }, createdAt,
+    });
+    enqueueEmail(db, {
+      idempotencyKey: `email:${transactionId}:sender`, eventType: 'transfer.sent', aggregateType: 'transaction', aggregateId: transactionId,
+      recipient: sender.email, recipientUserId: sender.id, templateId: 'transfer-sent', payload: { ...emailPayload, name: sender.name, recipientName: recipient.name }, createdAt,
+    });
     db.prepare(`
       INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at)
       VALUES (?, 'transfer.created', 'transaction', ?, ?, ?)
@@ -224,12 +229,11 @@ export function createAdminAdjustment(db, { adminId, targetUserId, accountLabel,
       INSERT INTO notifications (id, user_id, event_type, title, message, idempotency_key, created_at, metadata_json)
       VALUES (?, ?, 'admin-credit', 'Funds credited', ?, ?, ?, ?)
     `).run(`NOTICE-${transactionId}`, target.id, `$${(amountMinor / 100).toFixed(2)} was credited to your ${normalizedLabel} account.`, `notification:${transactionId}:recipient`, createdAt, JSON.stringify({ transactionId, adminId: admin.id }));
-    db.prepare(`
-      INSERT INTO email_outbox (
-        idempotency_key, event_type, aggregate_type, aggregate_id, recipient, template_id, payload_json,
-        status, created_at, updated_at
-      ) VALUES (?, 'account.admin-credit', 'transaction', ?, ?, 'admin-credit', ?, 'pending', ?, ?)
-    `).run(`email:${transactionId}:recipient`, transactionId, target.email, JSON.stringify({ name: target.name, amount: (amountMinor / 100).toFixed(2), accountLabel: normalizedLabel }), createdAt, createdAt);
+    enqueueEmail(db, {
+      idempotencyKey: `email:${transactionId}:recipient`, eventType: 'account.admin-credit', aggregateType: 'transaction', aggregateId: transactionId,
+      recipient: target.email, recipientUserId: target.id, templateId: 'admin-credit',
+      payload: { name: target.name, amount: (amountMinor / 100).toFixed(2), currency: 'USD', accountLabel: normalizedLabel, reference: transactionId, occurredAt: createdAt }, createdAt,
+    });
     db.prepare(`
       INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at)
       VALUES (?, 'balance.admin-credit', 'user', ?, ?, ?)

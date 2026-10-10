@@ -27,19 +27,9 @@ services:
         sync: false
       - key: EMAIL_REPLY_TO
         sync: false
+      - key: EMAIL_FROM_NAME
+        value: PNC Bank
       - key: EMAIL_TEST_RECIPIENT
-        sync: false
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        sync: false
-      - key: SMTP_SECURE
-        sync: false
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: SENDGRID_API_KEY
         sync: false
       - key: EMAIL_FROM
         sync: false

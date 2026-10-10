@@ -286,6 +286,46 @@ function removeLegacyPhoneUniqueConstraint(db) {
   }
 }
 
+function ensureEmailSchema(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(email_outbox)').all().map((column) => column.name));
+  if (!columns.has('recipient_user_id')) db.exec('ALTER TABLE email_outbox ADD COLUMN recipient_user_id TEXT REFERENCES users(id)');
+  if (!columns.has('provider_status')) db.exec("ALTER TABLE email_outbox ADD COLUMN provider_status TEXT NOT NULL DEFAULT 'queued'");
+  if (!columns.has('next_attempt_at')) db.exec('ALTER TABLE email_outbox ADD COLUMN next_attempt_at TEXT');
+  const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map((column) => column.name));
+  if (!userColumns.has('email_verified_at')) db.exec('ALTER TABLE users ADD COLUMN email_verified_at TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS email_campaigns (
+      id TEXT PRIMARY KEY,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      actor_user_id TEXT NOT NULL REFERENCES users(id),
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      audience_type TEXT NOT NULL CHECK (audience_type IN ('all', 'selected')),
+      delivery_method TEXT NOT NULL CHECK (delivery_method IN ('in-app', 'email', 'both')),
+      recipient_count INTEGER NOT NULL CHECK (recipient_count >= 0),
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS email_webhook_events (
+      provider_event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      provider_message_id TEXT NOT NULL,
+      received_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_action_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      purpose TEXT NOT NULL CHECK (purpose IN ('email-verification', 'password-reset')),
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      consumed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_outbox_provider_message ON email_outbox(provider_message_id);
+    CREATE INDEX IF NOT EXISTS idx_campaigns_created ON email_campaigns(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_purpose ON auth_action_tokens(user_id, purpose, expires_at);
+  `);
+}
+
 export async function initializeDatabase({ dataDir, databaseFile = path.join(dataDir, 'pnc-bank.sqlite'), allowEmptyImport = process.env.NODE_ENV !== 'production' }) {
   await mkdir(dataDir, { recursive: true });
   const schema = await readFile(schemaFile, 'utf8');
@@ -298,8 +338,10 @@ export async function initializeDatabase({ dataDir, databaseFile = path.join(dat
     db.pragma('busy_timeout = 5000');
     db.exec(schema);
     removeLegacyPhoneUniqueConstraint(db);
+    ensureEmailSchema(db);
     db.prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, ?)').run(isoNow());
     db.prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, ?)').run(isoNow());
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, ?)').run(isoNow());
 
     const accountsSource = await readJsonSource('accounts.json', path.join(dataDir, 'accounts.json'), []);
     const workspaceSource = await readJsonSource('admin-workspace.json', path.join(dataDir, 'admin-workspace.json'), {});
@@ -364,6 +406,7 @@ export function readDatabaseAccounts(db) {
     role: user.role,
     status: user.status,
     verificationStatus: user.verification_status,
+    emailVerifiedAt: user.email_verified_at ?? '',
     updatedAt: user.updated_at,
     name: user.name,
     email: user.email,
@@ -423,7 +466,7 @@ export function updateDatabaseAccountPassword(db, userId, passwordHash) {
   if (result.changes !== 1) throw new Error('Account does not exist.');
 }
 
-export function createDatabaseAccount(db, account) {
+export function createDatabaseAccount(db, account, { afterInsert } = {}) {
   const now = isoNow();
   const execute = db.transaction(() => {
     db.prepare(`
@@ -439,6 +482,7 @@ export function createDatabaseAccount(db, account) {
     );
     const insertBalance = db.prepare('INSERT INTO account_balances (user_id, label, currency, amount_minor, updated_at) VALUES (?, ?, ?, ?, ?)');
     for (const balance of account.accounts ?? []) insertBalance.run(account.id, balance.label, balance.currency ?? 'USD', toMinorUnits(balance.amount), now);
+    afterInsert?.(db, now);
   });
   execute.immediate();
   return readDatabaseAccounts(db).find((entry) => entry.id === account.id);

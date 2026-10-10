@@ -179,16 +179,48 @@ CREATE TABLE IF NOT EXISTS email_outbox (
   aggregate_type TEXT,
   aggregate_id TEXT,
   recipient TEXT NOT NULL,
+  recipient_user_id TEXT REFERENCES users(id),
   template_id TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'accepted', 'delivered', 'failed', 'suppressed')),
+  provider_status TEXT NOT NULL DEFAULT 'queued',
   attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
   provider_message_id TEXT,
   last_error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  next_attempt_at TEXT,
   sent_at TEXT,
   delivered_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS email_campaigns (
+  id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  actor_user_id TEXT NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  audience_type TEXT NOT NULL CHECK (audience_type IN ('all', 'selected')),
+  delivery_method TEXT NOT NULL CHECK (delivery_method IN ('in-app', 'email', 'both')),
+  recipient_count INTEGER NOT NULL CHECK (recipient_count >= 0),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_webhook_events (
+  provider_event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  provider_message_id TEXT NOT NULL,
+  received_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_action_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL CHECK (purpose IN ('email-verification', 'password-reset')),
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  consumed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS platform_ownership (
@@ -214,6 +246,9 @@ CREATE INDEX IF NOT EXISTS idx_card_requests_requester_status ON card_requests(r
 CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions(user_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON email_outbox(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_provider_message ON email_outbox(provider_message_id);
+CREATE INDEX IF NOT EXISTS idx_campaigns_created ON email_campaigns(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_purpose ON auth_action_tokens(user_id, purpose, expires_at);
 
 INSERT OR IGNORE INTO platform_ownership (singleton_id, owner_user_id, version, updated_at)
 VALUES (1, NULL, 0, datetime('now'));

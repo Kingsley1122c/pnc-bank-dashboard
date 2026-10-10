@@ -34,7 +34,7 @@ test('verified internal transfer commits balanced money movement and durable eve
     assert.equal(result.recipient.accounts[0].amount, 45.25);
     assert.equal(db.prepare('SELECT COUNT(*) count FROM transactions').get().count, 1);
     assert.equal(db.prepare('SELECT COUNT(*) count FROM notifications').get().count, 2);
-    assert.equal(db.prepare('SELECT COUNT(*) count FROM email_outbox').get().count, 1);
+    assert.deepEqual(db.prepare('SELECT event_type FROM email_outbox ORDER BY event_type').all().map((entry) => entry.event_type), ['transfer.received', 'transfer.sent']);
     assert.equal(db.prepare('SELECT COUNT(*) count FROM audit_logs').get().count, 1);
   } finally { closeDatabase(db); }
 });
@@ -48,7 +48,7 @@ test('idempotency replay does not move money or duplicate events', async () => {
     assert.equal(second.transactionId, first.transactionId);
     assert.equal(second.sender.accounts[0].amount, 79.75);
     assert.equal(db.prepare('SELECT COUNT(*) count FROM transactions').get().count, 1);
-    assert.equal(db.prepare('SELECT COUNT(*) count FROM email_outbox').get().count, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM email_outbox').get().count, 2);
   } finally { closeDatabase(db); }
 });
 

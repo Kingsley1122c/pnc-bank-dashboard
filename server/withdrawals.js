@@ -1,5 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
+import { enqueueEmail } from './email-service.js';
 import { hashPassword, verifyPassword } from './security.js';
 
 const REVIEW_WINDOW_MS = 5 * 60 * 1000;
@@ -47,7 +48,7 @@ function formatWithdrawal(row) {
 
 function findWithdrawal(db, id) {
   return db.prepare(`
-    SELECT withdrawal_requests.*, users.name AS requester_name
+    SELECT withdrawal_requests.*, users.name AS requester_name, users.email AS requester_email
     FROM withdrawal_requests
     LEFT JOIN users ON users.id = withdrawal_requests.requester_user_id
     WHERE withdrawal_requests.id = ?
@@ -82,6 +83,28 @@ function insertAudit(db, { actorUserId, action, withdrawalId, details, createdAt
     INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at)
     VALUES (?, ?, 'withdrawal', ?, ?, ?)
   `).run(actorUserId, action, withdrawalId, JSON.stringify(details), createdAt);
+}
+
+function enqueueWithdrawalEmail(db, row, { status, message, createdAt, eventKey }) {
+  enqueueEmail(db, {
+    idempotencyKey: `email:${row.id}:withdrawal:${eventKey}`,
+    eventType: `withdrawal.${eventKey}`,
+    aggregateType: 'withdrawal',
+    aggregateId: row.id,
+    recipient: row.requester_email,
+    recipientUserId: row.requester_user_id,
+    templateId: 'withdrawal',
+    payload: {
+      name: row.requester_name,
+      amount: (row.amount_minor / 100).toFixed(2),
+      currency: row.currency,
+      reference: row.id,
+      occurredAt: createdAt,
+      status,
+      message,
+    },
+    createdAt,
+  });
 }
 
 export function listWithdrawals(db, { requesterId = null } = {}) {
@@ -139,6 +162,10 @@ export function createWithdrawalRequest(db, { requesterId, bankId, amount, messa
       INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at)
       VALUES (?, 'withdrawal.requested', 'withdrawal', ?, ?, ?)
     `).run(requesterId, requestId, JSON.stringify({ amountMinor, bankId: normalizedBankId }), requestedAt);
+    enqueueWithdrawalEmail(db, findWithdrawal(db, requestId), {
+      status: 'Pending', eventKey: 'requested', createdAt: requestedAt,
+      message: 'Your withdrawal request was received and is pending review. No payout has been completed.',
+    });
 
     return { replayed: false, request: formatWithdrawal(findWithdrawal(db, requestId)) };
   });
@@ -205,6 +232,9 @@ export async function decideWithdrawal(db, { adminId, withdrawalId, decision, ex
       details: { requesterUserId: row.requester_user_id, note: normalizedNote },
       createdAt,
     });
+    enqueueWithdrawalEmail(db, findWithdrawal(db, withdrawalId), {
+      status, eventKey: status.toLowerCase(), createdAt, message,
+    });
 
     return { request: formatWithdrawal(findWithdrawal(db, withdrawalId)), approvalCode };
   });
@@ -262,6 +292,10 @@ export async function submitWithdrawalCode(db, { requesterId, withdrawalId, code
       details: { expectedFailureAt },
       createdAt: enteredAt,
     });
+    enqueueWithdrawalEmail(db, findWithdrawal(db, withdrawalId), {
+      status: 'Pending', eventKey: 'code-entered', createdAt: enteredAt,
+      message: `Code received for ${withdrawalId}. The withdrawal remains pending for compliance review. No payout has been completed.`,
+    });
     return { request: formatWithdrawal(findWithdrawal(db, withdrawalId)) };
   });
 
@@ -307,6 +341,10 @@ export function expireWithdrawalReview(db, { requesterId, withdrawalId, expected
       withdrawalId,
       details: { reason: 'Compliance timeout' },
       createdAt: failedAt,
+    });
+    enqueueWithdrawalEmail(db, findWithdrawal(db, withdrawalId), {
+      status: 'Failed', eventKey: 'failed', createdAt: failedAt,
+      message: `Withdrawal ${withdrawalId} failed after pending review. No payout was completed and your funds remain available.`,
     });
     return { request: formatWithdrawal(findWithdrawal(db, withdrawalId)) };
   });

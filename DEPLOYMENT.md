@@ -8,7 +8,7 @@ The production service is configured for one origin and one application base URL
 - `ALLOWED_ORIGINS=https://pnc-core.com,https://www.pnc-core.com`
 - `VITE_API_BASE_URL` remains empty because the frontend and API are served by the same Render service.
 
-Keep `EMAIL_MODE=disabled` until the sender domain and controlled-recipient tests pass. Store all API keys and SMTP credentials only in Render's secret environment settings.
+Keep `EMAIL_MODE=disabled` until the sender domain and controlled-recipient tests pass. Resend is the sole provider; store its API key and webhook secret only in Render's secret environment settings.
 
 ## Render custom domain
 
@@ -66,3 +66,23 @@ Production delivery requires all of the following:
 - `EMAIL_REPLY_TO` is a monitored address.
 - `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are Render secrets.
 - Controlled sending succeeds in restricted mode before `EMAIL_MODE` is changed to `live`.
+
+## Email rollout and operations
+
+Configure these values in Render: `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `EMAIL_MODE`, `EMAIL_TEST_RECIPIENT`, and `APP_BASE_URL`. Set the Resend webhook URL to `https://pnc-core.com/api/webhooks/resend` and subscribe to delivered, bounced, complained, and failed email events.
+
+Use this rollout sequence:
+
+1. Leave `EMAIL_MODE=disabled` while deploying and checking `/api/health`.
+2. Verify the Resend sender domain, SPF, DKIM, return path, and a single valid DMARC policy. Do not replace unrelated DNS records.
+3. Set `EMAIL_TEST_RECIPIENT` to a controlled inbox and change `EMAIL_MODE=restricted`.
+4. Register a test-only account using that address and confirm the admin communication history records provider acceptance.
+5. Confirm the signed webhook changes the status to delivered and verify the message arrived in the controlled inbox.
+6. Test password reset, verification, one transaction notification, and one admin announcement only with controlled test data.
+7. Change `EMAIL_MODE=live` only after every controlled test passes.
+
+Application events commit their business data and email outbox records in the same database transaction. A background worker submits each email to Resend with a stable idempotency key. Provider acceptance is not delivery: `accepted` means Resend accepted the request, while `delivered`, `bounced`, `complained`, and `failed` come from verified webhook events. Failed submissions retry at increasing delays for at most five attempts; financial operations are never replayed by an email retry.
+
+Admin announcements are authorized and expanded server-side into one message per recipient, so recipient addresses are never disclosed to each other. Bulk campaigns require the exact confirmation phrase shown in the preview. Only failed campaign jobs can be requeued.
+
+Email content and provider metadata remain in the application database for operational history. Access is limited to authenticated admin communication endpoints; action tokens are SHA-256 hashes, expire, and can be used once. Establish an approved retention period before enabling live mail, then add an audited purge job for expired tokens, old webhook payloads, and old rendered message payloads.

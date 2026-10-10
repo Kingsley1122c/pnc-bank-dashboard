@@ -1313,12 +1313,8 @@ function getSharedEventsApiUrl() {
   return `${getSharedApiBaseUrl()}/api/events`;
 }
 
-function getWelcomeEmailApiUrl() {
-  return `${getSharedApiBaseUrl()}/api/emails/welcome`;
-}
-
-function getImportantMessageEmailApiUrl() {
-  return `${getSharedApiBaseUrl()}/api/emails/important-message`;
+function getAdminCommunicationsApiUrl() {
+  return `${getSharedApiBaseUrl()}/api/admin/communications`;
 }
 
 function getAuthApiUrl(path) {
@@ -1359,6 +1355,60 @@ async function requestRegistration(profile) {
   }
 
   return payload;
+}
+
+async function requestPasswordReset(email) {
+  const response = await fetch(getAuthApiUrl('request-password-reset'), {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to request a password reset right now.');
+  return payload;
+}
+
+async function resetPassword(token, password) {
+  const response = await fetch(getAuthApiUrl('reset-password'), {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, password }),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to reset the password right now.');
+  return payload;
+}
+
+async function verifyEmail(token) {
+  const response = await fetch(getAuthApiUrl('verify-email'), {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to verify this email address.');
+  return payload;
+}
+
+async function requestCommunication(path = '', options = {}) {
+  const response = await fetch(`${getAdminCommunicationsApiUrl()}${path}`, {
+    credentials: 'include',
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to manage communications right now.');
+  return payload;
+}
+
+function fetchCommunications() {
+  return requestCommunication();
+}
+
+function previewCommunication(details) {
+  return requestCommunication('/preview', { method: 'POST', body: JSON.stringify(details) });
+}
+
+function queueCommunication(details, idempotencyKey) {
+  return requestCommunication('', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(details) });
+}
+
+function retryCommunication(campaignId) {
+  return requestCommunication(`/${encodeURIComponent(campaignId)}/retry`, { method: 'POST', body: '{}' });
 }
 
 async function fetchAuthSession() {
@@ -1577,76 +1627,6 @@ async function saveRemoteAdminWorkspace(workspace, expectedUpdatedAt) {
   }
 
   return response.json();
-}
-
-async function requestWelcomeEmail({ name, email, accountNumber }) {
-  try {
-    const response = await fetch(getWelcomeEmailApiUrl(), {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name, email, accountNumber }),
-    });
-
-    const payload = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        configured: payload.configured ?? true,
-        message: payload.message ?? 'Unable to send welcome email right now.',
-      };
-    }
-
-    return {
-      ok: true,
-      configured: true,
-      message: payload.message ?? `Welcome email sent to ${email}.`,
-    };
-  } catch {
-    return {
-      ok: false,
-      configured: false,
-      message: 'Email service is unavailable right now.',
-    };
-  }
-}
-
-async function requestImportantMessageEmail({ name, email, subject, message }) {
-  try {
-    const response = await fetch(getImportantMessageEmailApiUrl(), {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name, email, subject, message }),
-    });
-
-    const payload = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        configured: payload.configured ?? true,
-        message: payload.message ?? 'Unable to send important message email right now.',
-      };
-    }
-
-    return {
-      ok: true,
-      configured: true,
-      message: payload.message ?? `Important message email sent to ${email}.`,
-    };
-  } catch {
-    return {
-      ok: false,
-      configured: false,
-      message: 'Email service is unavailable right now.',
-    };
-  }
 }
 
 function normalizeAccountDefaults(account) {
@@ -1982,8 +1962,14 @@ function loadAdminWorkspaceState() {
 function App() {
   const [accounts, setAccounts] = useState(loadAccounts);
   const [activeUserId, setActiveUserId] = useState(() => readStorage(ACTIVE_USER_STORAGE_KEY) ?? '');
-  const [authMode, setAuthMode] = useState('login');
-  const [publicPage, setPublicPage] = useState('home');
+  const initialAuthAction = useMemo(() => {
+    const parameters = new URLSearchParams(window.location.search);
+    if (parameters.get('token') && window.location.pathname.endsWith('/reset-password')) return 'reset-password';
+    if (parameters.get('token') && window.location.pathname.endsWith('/verify-email')) return 'verify-email';
+    return '';
+  }, []);
+  const [authMode, setAuthMode] = useState(initialAuthAction || 'login');
+  const [publicPage, setPublicPage] = useState(initialAuthAction || 'home');
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     const storedLanguage = readStorage(LANGUAGE_STORAGE_KEY) ?? 'en';
     return languageOptions.some((entry) => entry.value === storedLanguage) ? storedLanguage : 'en';
@@ -2048,9 +2034,14 @@ function App() {
   const [announcementComposerOpen, setAnnouncementComposerOpen] = useState(false);
   const [announcementDraft, setAnnouncementDraft] = useState({
     title: '',
+    message: '',
     audience: 'All retail users',
-    channel: 'Push + Email',
+    deliveryMethod: 'both',
+    confirmation: '',
   });
+  const [communicationHistory, setCommunicationHistory] = useState([]);
+  const [communicationTotals, setCommunicationTotals] = useState({ attempted: 0, pending: 0, accepted: 0, delivered: 0, failed: 0, bounced: 0, complained: 0 });
+  const [emailProviderState, setEmailProviderState] = useState({ configured: false, mode: 'disabled' });
   const [userEditForm, setUserEditForm] = useState({ segment: '', kycLevel: '', password: '' });
   const [adminCreditForm, setAdminCreditForm] = useState({ amount: '', accountLabel: 'Current', note: '' });
   const [adminFundingReceipt, setAdminFundingReceipt] = useState(null);
@@ -2347,6 +2338,22 @@ function App() {
       cancelled = true;
     };
   }, [activeUser?.id, activeUser?.role, serverAuthenticated]);
+
+  useEffect(() => {
+    if (!serverAuthenticated || activeUser?.role !== 'admin') return;
+    let cancelled = false;
+    fetchCommunications()
+      .then((payload) => {
+        if (cancelled) return;
+        setCommunicationHistory(payload.campaigns ?? []);
+        setCommunicationTotals(payload.totals ?? {});
+        setEmailProviderState(payload.provider ?? { configured: false, mode: 'disabled' });
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUser?.role, serverAuthenticated]);
 
   useEffect(() => {
     if (!remoteAccountsReady || !serverAuthenticated) {
@@ -2886,6 +2893,39 @@ function App() {
     }
   }
 
+  async function handlePasswordResetRequest() {
+    try {
+      const result = await requestPasswordReset(authForm.identifier);
+      setAuthMessage(result.message ?? 'If that email is registered, a reset link has been queued.');
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Unable to request a password reset right now.');
+    }
+  }
+
+  async function handlePasswordReset(password) {
+    const token = new URLSearchParams(window.location.search).get('token') ?? '';
+    try {
+      const result = await resetPassword(token, password);
+      window.history.replaceState({}, '', '/');
+      setAuthMode('login');
+      setPublicPage('login');
+      setAuthForm((current) => ({ ...current, password: '' }));
+      setAuthMessage(result.message ?? 'Password updated. You can now sign in.');
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Unable to reset the password right now.');
+    }
+  }
+
+  async function handleEmailVerification() {
+    const token = new URLSearchParams(window.location.search).get('token') ?? '';
+    try {
+      const result = await verifyEmail(token);
+      setAuthMessage(result.message ?? 'Email address verified.');
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Unable to verify this email address.');
+    }
+  }
+
   async function handleLogout() {
     await requestLogout();
     setServerAuthenticated(false);
@@ -3286,7 +3326,7 @@ function App() {
     };
   }
 
-  async function notifyWithdrawalStatus({ targetRequest, notificationTitle, notificationMessage, emailSubject, emailMessage }) {
+  async function notifyWithdrawalStatus({ targetRequest, notificationTitle, notificationMessage }) {
     if (!targetRequest?.requesterId) {
       return;
     }
@@ -3319,60 +3359,6 @@ function App() {
       }),
     );
 
-    if (recipient.email) {
-      await requestImportantMessageEmail({
-        name: recipient.name,
-        email: recipient.email,
-        subject: emailSubject,
-        message: emailMessage,
-      });
-    }
-
-  }
-
-  async function notifyUserAccountMessage({ accountId, title, message }) {
-    if (!accountId) {
-      return null;
-    }
-
-    const recipient = accounts.find((account) => account.id === accountId && account.role !== 'admin');
-
-    if (!recipient) {
-      return null;
-    }
-
-    setAccounts((current) =>
-      current.map((account) => {
-        if (account.id !== recipient.id) {
-          return account;
-        }
-
-        return {
-          ...account,
-          notifications: [
-            normalizeNotificationEntry({
-              id: `NOTICE-ADMIN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-              type: 'admin-message',
-              title,
-              message,
-              createdAt: new Date().toISOString(),
-            }),
-            ...(account.notifications ?? []).map(normalizeNotificationEntry),
-          ],
-        };
-      }),
-    );
-
-    if (recipient.email) {
-      await requestImportantMessageEmail({
-        name: recipient.name,
-        email: recipient.email,
-        subject: title,
-        message,
-      });
-    }
-
-    return recipient;
   }
 
   async function handleWithdrawalCodeSubmission(requestId, enteredCode) {
@@ -3570,88 +3556,55 @@ function App() {
     setAnnouncementComposerOpen(false);
   }
 
-  async function handleAdminAnnouncement() {
-    const issuedAt = new Date().toISOString();
-    const audience = announcementDraft.audience.trim() || 'All retail users';
-    const announcement = {
-      id: `ANN-${Date.now()}`,
-      title: announcementDraft.title.trim() || 'Operations update issued',
-      audience,
-      channel: announcementDraft.channel,
-      status: 'Queued',
-      createdAt: issuedAt,
+  async function handleServerAdminAnnouncement() {
+    const normalizedAudience = announcementDraft.audience.trim().toLowerCase();
+    const selectedAccount = accounts.find((account) => account.role !== 'admin' && [account.name, account.email, account.id, account.accountNumber ?? ''].some((value) => String(value).toLowerCase() === normalizedAudience));
+    const details = {
+      title: announcementDraft.title.trim(),
+      message: announcementDraft.message.trim(),
+      audienceType: selectedAccount ? 'selected' : 'all',
+      recipientIds: selectedAccount ? [selectedAccount.id] : [],
+      deliveryMethod: announcementDraft.deliveryMethod,
+      confirmation: announcementDraft.confirmation.trim(),
     };
-    const normalizedAudience = audience.toLowerCase();
-    const targetedUsers = accounts.filter((account) => {
-      if (account.role === 'admin') {
-        return false;
+    try {
+      const preview = await previewCommunication(details);
+      if (preview.confirmation && preview.confirmation !== details.confirmation) {
+        setAdminNotice(`Preview: ${preview.recipientCount} eligible recipients. Enter ${preview.confirmation} to confirm.`);
+        return;
       }
+      const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `campaign-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const result = await queueCommunication(details, idempotencyKey);
+      const history = await fetchCommunications();
+      setCommunicationHistory(history.campaigns ?? []);
+      setCommunicationTotals(history.totals ?? {});
+      setEmailProviderState(history.provider ?? { configured: false, mode: 'disabled' });
+      setAdminNotificationRecords((current) => [{
+        id: result.campaign.id,
+        title: result.campaign.title,
+        audience: `${result.campaign.recipientCount} customer(s)`,
+        channel: result.campaign.deliveryMethod,
+        status: result.campaign.pending > 0 ? 'Queued' : 'Recorded',
+        createdAt: result.campaign.createdAt,
+      }, ...current].slice(0, 6));
+      setAnnouncementDraft({ title: '', message: '', audience: 'All retail users', deliveryMethod: 'both', confirmation: '' });
+      setAdminNotice(`Announcement queued for ${result.campaign.recipientCount} customer(s). Provider acceptance is tracked separately from delivery.`);
+      setAnnouncementComposerOpen(false);
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Unable to queue this announcement right now.');
+    }
+  }
 
-      const matchesSpecificAudience = [account.name, account.email, account.id, account.accountNumber ?? '']
-        .some((value) => String(value).toLowerCase() === normalizedAudience);
-
-      return normalizedAudience === 'all retail users'
-        || normalizedAudience === 'all users'
-        || normalizedAudience === 'all customers'
-        || matchesSpecificAudience;
-    });
-
-    setAdminNotificationRecords((current) => [announcement, ...current].slice(0, 6));
-    setAccounts((current) =>
-      current.map((account) => {
-        if (account.role === 'admin') {
-          return account;
-        }
-
-        const matchesSpecificAudience = [account.name, account.email, account.id, account.accountNumber ?? '']
-          .some((value) => String(value).toLowerCase() === normalizedAudience);
-        const deliverToAccount =
-          normalizedAudience === 'all retail users'
-          || normalizedAudience === 'all users'
-          || normalizedAudience === 'all customers'
-          || matchesSpecificAudience;
-
-        if (!deliverToAccount) {
-          return account;
-        }
-
-        return {
-          ...account,
-          notifications: [
-            normalizeNotificationEntry({
-              id: `${announcement.id}-${account.id}`,
-              type: 'admin-announcement',
-              title: 'Admin message',
-              message: announcement.title,
-              channel: announcement.channel,
-              audience: announcement.audience,
-              createdAt: issuedAt,
-            }),
-            ...(account.notifications ?? []).map(normalizeNotificationEntry),
-          ],
-        };
-      }),
-    );
-
-    const emailTargets = targetedUsers.filter((account) => account.email);
-    await Promise.all(
-      emailTargets.map((account) =>
-        requestImportantMessageEmail({
-          name: account.name,
-          email: account.email,
-          subject: announcement.title,
-          message: announcement.title,
-        }),
-      ),
-    );
-
-    setAnnouncementDraft((current) => ({ ...current, title: '' }));
-    setAdminNotice(`Announcement queued for ${audience} and delivered inside the bank.`);
-    pushAdminActivity(
-      `${activeUser?.name ?? 'Admin'} queued a new announcement for ${audience}.`,
-      { promoteToLiveFeed: true },
-    );
-    setAnnouncementComposerOpen(false);
+  async function handleRetryCommunication(campaignId) {
+    try {
+      const result = await retryCommunication(campaignId);
+      const history = await fetchCommunications();
+      setCommunicationHistory(history.campaigns ?? []);
+      setCommunicationTotals(history.totals ?? {});
+      setAdminNotice(`${result.queuedCount} failed delivery attempt(s) queued for retry.`);
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Unable to retry this announcement right now.');
+    }
   }
 
   function updateAnnouncementDraft(field, value) {
@@ -4192,13 +4145,6 @@ function App() {
     setAdminNotice(`${updatedRequest.id} has been generated and activated.`);
     pushAdminActivity(`${activeUser?.name ?? 'Admin'} generated card request ${updatedRequest.id}.`, { promoteToLiveFeed: true });
 
-    await notifyUserAccountMessage({
-      accountId: updatedRequest.requesterId,
-      title: 'Debit card ready',
-      message: `Your ${issuedCard.cardMode.toLowerCase()} has been generated and is now active on your dashboard.`,
-      emailSubject: 'Debit card ready',
-      emailMessage: `Your ${issuedCard.cardMode.toLowerCase()} has been generated and is now active on your dashboard.`,
-    });
   }
 
   function handleTransactionAction(transactionId, action) {
@@ -4431,6 +4377,9 @@ function App() {
           updateAuthField={updateAuthField}
           handleLogin={handleLogin}
           handleRegister={handleRegister}
+          handlePasswordResetRequest={handlePasswordResetRequest}
+          handlePasswordReset={handlePasswordReset}
+          handleEmailVerification={handleEmailVerification}
           authMessage={authMessage}
           setAuthMessage={setAuthMessage}
           publicPage={publicPage}
@@ -4561,9 +4510,13 @@ function App() {
         announcementComposerOpen={announcementComposerOpen}
         onOpenAnnouncementComposer={openAnnouncementComposer}
         onCloseAnnouncementComposer={closeAnnouncementComposer}
-        onSendAnnouncement={handleAdminAnnouncement}
+        onSendAnnouncement={handleServerAdminAnnouncement}
         announcementDraft={announcementDraft}
         onAnnouncementDraftChange={updateAnnouncementDraft}
+        communicationHistory={communicationHistory}
+        communicationTotals={communicationTotals}
+        emailProviderState={emailProviderState}
+        onRetryCommunication={handleRetryCommunication}
         onExportReports={handleAdminExportReports}
         adminUserRecords={adminUserRecords}
         filteredAdminUsers={filteredAdminUsers}
@@ -4674,6 +4627,9 @@ function AuthScreen({
   updateAuthField,
   handleLogin,
   handleRegister,
+  handlePasswordResetRequest,
+  handlePasswordReset,
+  handleEmailVerification,
   authMessage,
   setAuthMessage,
   publicPage,
@@ -4683,7 +4639,7 @@ function AuthScreen({
   languageSelector,
 }) {
   const isHomePage = publicPage === 'home';
-  const isAuthPage = publicPage === 'login' || publicPage === 'register';
+  const isAuthPage = ['login', 'register', 'forgot-password', 'reset-password', 'verify-email'].includes(publicPage);
   const pageContent = publicPageContent[publicPage] ?? publicPageContent.home;
   const generalCustomerServiceHref = getSupportEmailHref(
     CUSTOMER_SERVICE_EMAIL,
@@ -4692,8 +4648,17 @@ function AuthScreen({
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [capturedPhoto, setCapturedPhoto] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmedPassword, setConfirmedPassword] = useState('');
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const verificationStartedRef = useRef(false);
+
+  useEffect(() => {
+    if (publicPage !== 'verify-email' || verificationStartedRef.current) return;
+    verificationStartedRef.current = true;
+    void handleEmailVerification();
+  }, [handleEmailVerification, publicPage]);
 
   useEffect(() => {
     if (!cameraDialogOpen) {
@@ -4755,6 +4720,20 @@ function AuthScreen({
       return;
     }
 
+    if (authMode === 'forgot-password') {
+      onRunLoadingFlow('auth-password-reset-request', handlePasswordResetRequest);
+      return;
+    }
+
+    if (authMode === 'reset-password') {
+      if (newPassword !== confirmedPassword) {
+        setAuthMessage('The passwords do not match.');
+        return;
+      }
+      onRunLoadingFlow('auth-password-reset', () => handlePasswordReset(newPassword));
+      return;
+    }
+
     setCapturedPhoto('');
     setCameraDialogOpen(true);
   }
@@ -4803,6 +4782,8 @@ function AuthScreen({
   }
 
   if (isAuthPage) {
+    const isRecoveryMode = authMode === 'forgot-password' || authMode === 'reset-password' || authMode === 'verify-email';
+
     return (
       <div className="auth-standalone-shell">
         <div className="landing-overlay auth-standalone-overlay" />
@@ -4810,16 +4791,33 @@ function AuthScreen({
 
         <section className="auth-standalone-panel-wrap">
           <div className="auth-panel glass-card auth-page-panel auth-standalone-panel">
-            <div className="mode-toggle auth-toggle">
-              <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => openAuthPage('login')}>
-                Login
-              </button>
-              <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => openAuthPage('register')}>
-                Register
-              </button>
-            </div>
+            {!isRecoveryMode && (
+              <div className="mode-toggle auth-toggle">
+                <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => openAuthPage('login')}>
+                  Login
+                </button>
+                <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => openAuthPage('register')}>
+                  Register
+                </button>
+              </div>
+            )}
 
             <form className="auth-form" onSubmit={handleAuthSubmit}>
+              {authMode === 'forgot-password' && (
+                <div className="section-head compact">
+                  <div><p className="eyebrow">Account Recovery</p><h3>Reset your password</h3></div>
+                </div>
+              )}
+              {authMode === 'reset-password' && (
+                <div className="section-head compact">
+                  <div><p className="eyebrow">Secure Link</p><h3>Choose a new password</h3></div>
+                </div>
+              )}
+              {authMode === 'verify-email' && (
+                <div className="section-head compact">
+                  <div><p className="eyebrow">Email Verification</p><h3>Confirming your email</h3></div>
+                </div>
+              )}
               {authMode === 'register' && (
                 <label>
                   <span>Full name</span>
@@ -4827,10 +4825,10 @@ function AuthScreen({
                 </label>
               )}
 
-              <label>
+              {authMode !== 'reset-password' && authMode !== 'verify-email' && <label>
                 <span>{authMode === 'login' ? 'Email or phone' : 'Email address'}</span>
                 <input value={authForm.identifier} onChange={(event) => updateAuthField('identifier', event.target.value)} />
-              </label>
+              </label>}
 
               {authMode === 'register' && (
                 <label>
@@ -4858,7 +4856,7 @@ function AuthScreen({
                 </label>
               )}
 
-              <label>
+              {(authMode === 'login' || authMode === 'register') && <label>
                 <span>Password</span>
                 <input
                   type="password"
@@ -4866,13 +4864,24 @@ function AuthScreen({
                   value={authForm.password}
                   onChange={(event) => updateAuthField('password', event.target.value)}
                 />
-              </label>
+              </label>}
+
+              {authMode === 'reset-password' && (
+                <>
+                  <label><span>New password</span><input type="password" required minLength="8" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+                  <label><span>Confirm new password</span><input type="password" required minLength="8" value={confirmedPassword} onChange={(event) => setConfirmedPassword(event.target.value)} /></label>
+                </>
+              )}
 
               {authMessage && <p className="auth-message">{authMessage}</p>}
 
-              <button type="submit" className="primary-button auth-submit auth-standalone-submit">
-                {authMode === 'login' ? 'Login' : 'Create Account'}
-              </button>
+              {authMode !== 'verify-email' && (
+                <button type="submit" className="primary-button auth-submit auth-standalone-submit">
+                  {authMode === 'login' ? 'Login' : authMode === 'register' ? 'Create Account' : authMode === 'forgot-password' ? 'Send reset link' : 'Update password'}
+                </button>
+              )}
+              {authMode === 'login' && <button type="button" className="auth-text-button" onClick={() => openAuthPage('forgot-password')}>Forgot password?</button>}
+              {isRecoveryMode && <button type="button" className="auth-text-button" onClick={() => openAuthPage('login')}>Back to login</button>}
             </form>
           </div>
         </section>
@@ -7430,6 +7439,10 @@ function AdminDashboard({
   onSendAnnouncement,
   announcementDraft,
   onAnnouncementDraftChange,
+  communicationHistory,
+  communicationTotals,
+  emailProviderState,
+  onRetryCommunication,
   onExportReports,
   adminUserRecords,
   filteredAdminUsers,
@@ -9005,25 +9018,48 @@ function AdminDashboard({
               <small>Search by customer name, email, account ID, or account number.</small>
             </label>
             <label className="input-shell admin-form-field">
-              <span>Channel</span>
-              <input value={announcementDraft.channel} onChange={(event) => onAnnouncementDraftChange('channel', event.target.value)} />
+              <span>Delivery</span>
+              <select value={announcementDraft.deliveryMethod} onChange={(event) => onAnnouncementDraftChange('deliveryMethod', event.target.value)}>
+                <option value="both">In-app and email</option>
+                <option value="in-app">In-app only</option>
+                <option value="email">Email only</option>
+              </select>
+            </label>
+            <label className="input-shell admin-form-field admin-form-field-wide">
+              <span>Message</span>
+              <textarea value={announcementDraft.message} onChange={(event) => onAnnouncementDraftChange('message', event.target.value)} rows="4" />
+            </label>
+            <label className="input-shell admin-form-field admin-form-field-wide">
+              <span>Bulk confirmation</span>
+              <input value={announcementDraft.confirmation} onChange={(event) => onAnnouncementDraftChange('confirmation', event.target.value)} placeholder="Preview first to receive the confirmation phrase" />
             </label>
             <button type="button" className="primary-button" onClick={onSendAnnouncement}>
-              Queue Announcement
+              Preview / Queue
             </button>
           </div>
+          <div className="admin-stat-grid communication-stat-grid">
+            <article className="stat-card"><span>Pending</span><strong>{communicationTotals.pending ?? 0}</strong></article>
+            <article className="stat-card"><span>Accepted</span><strong>{communicationTotals.accepted ?? 0}</strong></article>
+            <article className="stat-card"><span>Delivered</span><strong>{communicationTotals.delivered ?? 0}</strong></article>
+            <article className="stat-card"><span>Failed</span><strong>{communicationTotals.failed ?? 0}</strong></article>
+          </div>
           <div className="mini-table">
-            {adminNotificationRecords.map((item) => (
-              <div key={`${item.title}-${item.audience}`} className="mini-row admin-mini-row">
+            <div className="mini-row admin-mini-row">
+              <div><strong>Resend delivery</strong><span>{emailProviderState.configured ? `Configured • ${emailProviderState.mode}` : 'Awaiting provider configuration'}</span></div>
+              <span className={`status-pill ${emailProviderState.mode === 'live' ? 'completed' : 'pending'}`}>{emailProviderState.mode}</span>
+            </div>
+            {communicationHistory.map((item) => (
+              <div key={item.id} className="mini-row admin-mini-row">
                 <div>
                   <strong>{item.title}</strong>
                   <span>
-                    {item.audience} • {item.channel}
+                    {item.recipientCount} recipient(s) • {item.deliveryMethod} • {item.delivered} delivered • {item.accepted} accepted
                   </span>
                 </div>
-                <span className="status-pill completed">{item.status}</span>
+                {item.failed > 0 ? <button type="button" className="secondary-button compact-button" onClick={() => onRetryCommunication(item.id)}>Retry {item.failed}</button> : <span className={`status-pill ${item.pending > 0 ? 'pending' : 'completed'}`}>{item.pending > 0 ? 'Pending' : 'Recorded'}</span>}
               </div>
             ))}
+            {communicationHistory.length === 0 ? <p className="muted-copy">No server-managed campaigns have been sent.</p> : null}
           </div>
         </article>
       </section>
@@ -9239,11 +9275,23 @@ function AdminDashboard({
               <small>Search by customer name, email, account ID, or account number.</small>
             </label>
             <label className="input-shell admin-form-field">
-              <span>Channel</span>
-              <input value={announcementDraft.channel} onChange={(event) => onAnnouncementDraftChange('channel', event.target.value)} />
+              <span>Delivery</span>
+              <select value={announcementDraft.deliveryMethod} onChange={(event) => onAnnouncementDraftChange('deliveryMethod', event.target.value)}>
+                <option value="both">In-app and email</option>
+                <option value="in-app">In-app only</option>
+                <option value="email">Email only</option>
+              </select>
+            </label>
+            <label className="input-shell admin-form-field admin-form-field-wide">
+              <span>Message</span>
+              <textarea value={announcementDraft.message} onChange={(event) => onAnnouncementDraftChange('message', event.target.value)} rows="4" />
+            </label>
+            <label className="input-shell admin-form-field admin-form-field-wide">
+              <span>Bulk confirmation</span>
+              <input value={announcementDraft.confirmation} onChange={(event) => onAnnouncementDraftChange('confirmation', event.target.value)} placeholder="Preview first to receive the confirmation phrase" />
             </label>
             <button type="button" className="primary-button" onClick={onSendAnnouncement}>
-              Queue Announcement
+              Preview / Queue
             </button>
           </div>
         </article>
@@ -9407,8 +9455,20 @@ function AdminDashboard({
                   <small>Search by customer name, email, account ID, or account number.</small>
                 </label>
                 <label className="input-shell admin-form-field">
-                  <span>Channel</span>
-                  <input value={announcementDraft.channel} onChange={(event) => onAnnouncementDraftChange('channel', event.target.value)} />
+                  <span>Delivery</span>
+                  <select value={announcementDraft.deliveryMethod} onChange={(event) => onAnnouncementDraftChange('deliveryMethod', event.target.value)}>
+                    <option value="both">In-app and email</option>
+                    <option value="in-app">In-app only</option>
+                    <option value="email">Email only</option>
+                  </select>
+                </label>
+                <label className="input-shell admin-form-field admin-form-field-wide">
+                  <span>Message</span>
+                  <textarea value={announcementDraft.message} onChange={(event) => onAnnouncementDraftChange('message', event.target.value)} rows="5" />
+                </label>
+                <label className="input-shell admin-form-field admin-form-field-wide">
+                  <span>Bulk confirmation</span>
+                  <input value={announcementDraft.confirmation} onChange={(event) => onAnnouncementDraftChange('confirmation', event.target.value)} placeholder="Preview first to receive the confirmation phrase" />
                 </label>
               </div>
               <div className="admin-dialog-recipient-panel">
@@ -9455,7 +9515,7 @@ function AdminDashboard({
                   Cancel
                 </button>
                 <button type="button" className="primary-button" onClick={onSendAnnouncement}>
-                  Queue Announcement
+                  Preview / Queue
                 </button>
               </div>
             </div>

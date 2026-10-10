@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { enqueueEmail } from './email-service.js';
+
 export class AccountManagementError extends Error {
   constructor(status, code, message) {
     super(message);
@@ -83,6 +85,12 @@ export function updateAccountStatus(db, { adminId, targetUserId, status, expecte
       createdAt: updatedAt,
       metadata: { status: normalizedStatus },
     });
+    enqueueEmail(db, {
+      idempotencyKey: `email:account-status:${targetUserId}:${updatedAt}`,
+      eventType: 'account.status-changed', aggregateType: 'user', aggregateId: targetUserId,
+      recipient: target.email, recipientUserId: targetUserId, templateId: 'account-status',
+      payload: { name: target.name, subject: `Your PNC account is ${normalizedStatus.toLowerCase()}`, message: `Your account status is now ${normalizedStatus}. Contact support if you need a review.`, occurredAt: updatedAt }, createdAt: updatedAt,
+    });
     audit(db, { adminId, action: 'account.status-changed', targetUserId, details: { previousStatus: target.status, status: normalizedStatus }, createdAt: updatedAt });
     return { account: accountResult(db, targetUserId) };
   });
@@ -135,6 +143,34 @@ export function verifyAccount(db, { adminId, targetUserId, expectedUpdatedAt }) 
       createdAt: updatedAt,
       metadata: { releasedTransferCount: holds.length, releasedAmountMinor },
     });
+    enqueueEmail(db, {
+      idempotencyKey: `email:account-verified:${targetUserId}`,
+      eventType: 'account.verified', aggregateType: 'user', aggregateId: targetUserId,
+      recipient: target.email, recipientUserId: targetUserId, templateId: 'account-status',
+      payload: {
+        name: target.name,
+        subject: 'Your PNC account verification is complete',
+        message: holds.length > 0 ? `${holds.length} held incoming transfer(s) have now been released.` : 'Your account verification is complete.',
+        occurredAt: updatedAt,
+      },
+      createdAt: updatedAt,
+    });
+    for (const hold of holds) {
+      const transaction = db.prepare(`
+        SELECT transactions.*, sender.name AS sender_name, sender.email AS sender_email
+        FROM transactions LEFT JOIN users sender ON sender.id = transactions.initiator_user_id
+        WHERE transactions.id = ?
+      `).get(hold.transaction_id);
+      const common = { amount: (hold.amount_minor / 100).toFixed(2), currency: hold.currency, status: 'Completed', reference: hold.transaction_id, occurredAt: updatedAt };
+      enqueueEmail(db, {
+        idempotencyKey: `email:${hold.transaction_id}:recipient:completed`, eventType: 'transfer.completed', aggregateType: 'transaction', aggregateId: hold.transaction_id,
+        recipient: target.email, recipientUserId: targetUserId, templateId: 'transfer-received', payload: { ...common, name: target.name, senderName: transaction.sender_name }, createdAt: updatedAt,
+      });
+      enqueueEmail(db, {
+        idempotencyKey: `email:${hold.transaction_id}:sender:completed`, eventType: 'transfer.completed', aggregateType: 'transaction', aggregateId: hold.transaction_id,
+        recipient: transaction.sender_email, recipientUserId: hold.sender_user_id, templateId: 'transfer-sent', payload: { ...common, name: transaction.sender_name, recipientName: target.name }, createdAt: updatedAt,
+      });
+    }
     audit(db, { adminId, action: 'account.verified', targetUserId, details: { releasedTransferCount: holds.length, releasedAmountMinor }, createdAt: updatedAt });
     return { account: accountResult(db, targetUserId), releasedTransferCount: holds.length, releasedAmountMinor };
   });

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createAuthService } from './auth.js';
 import { AccountManagementError, updateAccountStatus, verifyAccount } from './account-management.js';
+import { CommunicationError, createCampaign, listCampaigns, previewCampaign, retryCampaign } from './communications.js';
 import {
   createDatabaseAccount,
   createDatabaseSessionStore,
@@ -17,7 +18,8 @@ import {
   saveDatabaseAdminWorkspace,
   updateDatabaseAccountPassword,
 } from './database.js';
-import { escapeHtml, hashPassword, isValidEmail, isValidEmailHeader, normalizeEmail, sanitizeAccount } from './security.js';
+import { consumeActionToken, createEmailProcessor, createResendProvider, enqueueEmail, issueActionToken, recordResendWebhook } from './email-service.js';
+import { hashPassword, isValidEmail, normalizeEmail, sanitizeAccount } from './security.js';
 import { claimOwnership, getOwnership, listOwnershipCandidates, OwnershipError, transferOwnership } from './ownership.js';
 import { createAdminAdjustment, createInternalTransfer, TransactionError } from './transactions.js';
 import {
@@ -40,8 +42,6 @@ const adminWorkspaceFile = path.join(dataDir, 'admin-workspace.json');
 const sessionsFile = path.join(dataDir, 'sessions.json');
 const distDir = path.resolve(process.cwd(), 'dist');
 const eventClients = new Set();
-let nodemailerPromise;
-let sendGridMailPromise;
 
 function getAppBaseUrl() {
   return process.env.APP_BASE_URL?.trim().replace(/\/$/, '') || '';
@@ -140,324 +140,6 @@ function generatePncAccountNumber(seed) {
   return String(1000000000 + hash).slice(0, 10);
 }
 
-function getEmailFromAddress() {
-  return process.env.EMAIL_FROM?.trim() || 'no-reply@pnc.bank';
-}
-
-function getEmailMode() {
-  const mode = String(process.env.EMAIL_MODE ?? 'disabled').trim().toLowerCase();
-  return ['disabled', 'restricted', 'live'].includes(mode) ? mode : 'disabled';
-}
-
-function getResendConfig() {
-  const apiKey = process.env.RESEND_API_KEY?.trim();
-  if (!apiKey) return null;
-  return { apiKey, from: getEmailFromAddress() };
-}
-
-function getSmtpConfig() {
-  const host = process.env.SMTP_HOST?.trim();
-  const user = process.env.SMTP_USER?.trim();
-  const pass = process.env.SMTP_PASS?.trim();
-
-  if (!host || !user || !pass) {
-    return null;
-  }
-
-  return {
-    host,
-    port: Number(process.env.SMTP_PORT ?? 587),
-    secure: String(process.env.SMTP_SECURE ?? 'false').toLowerCase() === 'true',
-    user,
-    pass,
-    from: getEmailFromAddress(),
-  };
-}
-
-function getSendGridConfig() {
-  const apiKey = process.env.SENDGRID_API_KEY?.trim();
-  const from = getEmailFromAddress();
-  if (!apiKey) return null;
-  return { apiKey, from };
-}
-
-async function getNodemailer() {
-  if (!nodemailerPromise) {
-    nodemailerPromise = import('nodemailer')
-      .then((module) => module.default ?? module)
-      .catch((error) => {
-        if (error?.code === 'ERR_MODULE_NOT_FOUND') {
-          return null;
-        }
-
-        throw error;
-      });
-  }
-
-  return nodemailerPromise;
-}
-
-async function getSendGridMail() {
-  if (!sendGridMailPromise) {
-    sendGridMailPromise = import('@sendgrid/mail')
-      .then((module) => module.default ?? module)
-      .catch((error) => {
-        if (error?.code === 'ERR_MODULE_NOT_FOUND') {
-          return null;
-        }
-
-        throw error;
-      });
-  }
-
-  return sendGridMailPromise;
-}
-
-async function getSendGridClient() {
-  const config = getSendGridConfig();
-  if (!config) return null;
-
-  const sgMail = await getSendGridMail();
-  if (!sgMail) return null;
-
-  sgMail.setApiKey(config.apiKey);
-  return { sgMail, from: config.from };
-}
-
-async function getMailClient() {
-  const mode = getEmailMode();
-  if (mode === 'disabled') return null;
-
-  const replyTo = process.env.EMAIL_REPLY_TO?.trim();
-  const testRecipient = normalizeEmail(process.env.EMAIL_TEST_RECIPIENT);
-  const restrictSend = (send) => async (message) => {
-    if (mode === 'restricted' && (!testRecipient || normalizeEmail(message.to) !== testRecipient)) {
-      throw new Error('Restricted email recipient rejected.');
-    }
-    return send(replyTo ? { ...message, replyTo } : message);
-  };
-  const resendConfig = getResendConfig();
-
-  if (resendConfig) {
-    return {
-      from: resendConfig.from,
-      send: restrictSend(async (message) => {
-        const response = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${resendConfig.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            from: resendConfig.from,
-            to: [message.to],
-            subject: message.subject,
-            text: message.text,
-            html: message.html,
-            ...(message.replyTo ? { reply_to: message.replyTo } : {}),
-          }),
-        });
-        if (!response.ok) throw new Error('Resend delivery failed.');
-        return response.json();
-      }),
-    };
-  }
-
-  const smtpConfig = getSmtpConfig();
-
-  if (smtpConfig) {
-    const nodemailer = await getNodemailer();
-
-    if (nodemailer) {
-      const transporter = nodemailer.createTransport({
-        host: smtpConfig.host,
-        port: smtpConfig.port,
-        secure: smtpConfig.secure,
-        auth: {
-          user: smtpConfig.user,
-          pass: smtpConfig.pass,
-        },
-      });
-
-      return {
-        from: smtpConfig.from,
-        send: restrictSend((message) => transporter.sendMail({
-          from: smtpConfig.from,
-          ...message,
-        })),
-      };
-    }
-  }
-
-  const sendGridClient = await getSendGridClient();
-  if (!sendGridClient) {
-    return null;
-  }
-
-  return {
-    from: sendGridClient.from,
-    send: restrictSend((message) => sendGridClient.sgMail.send({
-      from: sendGridClient.from,
-      ...message,
-    })),
-  };
-}
-
-async function sendWelcomeEmail({ name, email, accountNumber }) {
-  const mailer = await getMailClient();
-  if (!mailer) {
-    return {
-      ok: false,
-      configured: false,
-      message: 'Email provider is not configured on the server.',
-    };
-  }
-
-  const formattedAccountNumber = formatAccountNumber(accountNumber);
-  const safeName = escapeHtml(name);
-  const safeAccountNumber = escapeHtml(formattedAccountNumber);
-  const subject = 'Welcome to PNC Bank';
-  const text = [
-    `Hello ${name},`,
-    '',
-    'Your PNC Bank account has been created successfully.',
-    `Account number: ${formattedAccountNumber}`,
-    'Routing number: 031100089',
-    '',
-    'Your account may require verification before certain incoming transfers can be released.',
-    'If you need help, contact customer support.',
-    '',
-    'PNC Bank',
-  ].join('\n');
-
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
-      <h2 style="margin-bottom: 12px;">Welcome to PNC Bank</h2>
-      <p>Hello ${safeName},</p>
-      <p>Your PNC Bank account has been created successfully.</p>
-      <p><strong>Account number:</strong> ${safeAccountNumber}<br /><strong>Routing number:</strong> 031100089</p>
-      <p>Your account may require verification before certain incoming transfers can be released.</p>
-      <p>If you need help, contact customer support.</p>
-      <p style="margin-top: 24px;">PNC Bank</p>
-    </div>
-  `;
-
-  await mailer.send({
-    to: email,
-    subject,
-    text,
-    html,
-  });
-
-  return {
-    ok: true,
-    configured: true,
-    message: `Welcome email sent to ${email}.`,
-  };
-}
-
-async function sendTransferReceivedEmail({ name, email, amount, fromAccount, toAccount, transferDate }) {
-  const mailer = await getMailClient();
-  if (!mailer) {
-    return {
-      ok: false,
-      configured: false,
-      message: 'Email provider is not configured on the server.',
-    };
-  }
-
-  const subject = 'You have received a transfer';
-  const safeName = escapeHtml(name);
-  const safeAmount = escapeHtml(amount);
-  const safeFromAccount = escapeHtml(fromAccount);
-  const safeToAccount = escapeHtml(toAccount);
-  const safeTransferDate = escapeHtml(transferDate);
-  const text = [
-    `Hello ${name},`,
-    '',
-    `You have received a transfer of $${amount} to your account (${toAccount}).`,
-    fromAccount ? `From: ${fromAccount}` : '',
-    transferDate ? `Date: ${transferDate}` : '',
-    '',
-    'If you have any questions, contact customer support.',
-    '',
-    'PNC Bank',
-  ].filter(Boolean).join('\n');
-
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
-      <h2 style="margin-bottom: 12px;">You have received a transfer</h2>
-      <p>Hello ${safeName},</p>
-      <p>You have received a transfer of <strong>$${safeAmount}</strong> to your account (<strong>${safeToAccount}</strong>).</p>
-      ${fromAccount ? `<p><strong>From:</strong> ${safeFromAccount}</p>` : ''}
-      ${transferDate ? `<p><strong>Date:</strong> ${safeTransferDate}</p>` : ''}
-      <p>If you have any questions, contact customer support.</p>
-      <p style="margin-top: 24px;">PNC Bank</p>
-    </div>
-  `;
-
-  await mailer.send({
-    to: email,
-    subject,
-    text,
-    html,
-  });
-
-  return {
-    ok: true,
-    configured: true,
-    message: `Transfer received email sent to ${email}.`,
-  };
-}
-
-async function sendImportantMessageEmail({ name, email, subject, message }) {
-  const mailer = await getMailClient();
-  if (!mailer) {
-    return {
-      ok: false,
-      configured: false,
-      message: 'Email provider is not configured on the server.',
-    };
-  }
-
-  const emailSubject = subject || 'Important message from PNC Bank';
-  const safeSubject = escapeHtml(emailSubject);
-  const safeName = escapeHtml(name);
-  const safeMessage = escapeHtml(message).replaceAll('\n', '<br />');
-  const text = [
-    `Hello ${name},`,
-    '',
-    message,
-    '',
-    'If you have any questions, contact customer support.',
-    '',
-    'PNC Bank',
-  ].join('\n');
-
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0f172a;">
-      <h2 style="margin-bottom: 12px;">${safeSubject}</h2>
-      <p>Hello ${safeName},</p>
-      <p>${safeMessage}</p>
-      <p>If you have any questions, contact customer support.</p>
-      <p style="margin-top: 24px;">PNC Bank</p>
-    </div>
-  `;
-
-  await mailer.send({
-    to: email,
-    subject: emailSubject,
-    text,
-    html,
-  });
-
-  return {
-    ok: true,
-    configured: true,
-    message: `Important message email sent to ${email}.`,
-  };
-}
-
 function broadcastEvent(type) {
   const payload = `data: ${JSON.stringify({ type, timestamp: new Date().toISOString() })}\n\n`;
 
@@ -528,6 +210,23 @@ async function saveAdminWorkspace(workspace, expectedUpdatedAt) {
 
 if (process.env.NODE_ENV !== 'production') await ensureAccountsFile();
 const database = await initializeDatabase({ dataDir });
+const resendProvider = createResendProvider(process.env);
+const emailProcessor = createEmailProcessor({ db: database, env: process.env, provider: resendProvider });
+let emailProcessingPromise = null;
+
+function processEmailOutbox() {
+  if (!emailProcessingPromise) {
+    emailProcessingPromise = emailProcessor.processBatch(25).catch(() => ({ processed: 0 })).finally(() => {
+      emailProcessingPromise = null;
+    });
+  }
+  return emailProcessingPromise;
+}
+
+function scheduleEmailProcessing() {
+  setImmediate(() => void processEmailOutbox());
+}
+
 const authService = createAuthService({
   sessionsFile,
   sessionStore: createDatabaseSessionStore(database),
@@ -537,7 +236,6 @@ const authService = createAuthService({
   secureCookies: getAppBaseUrl().startsWith('https://') || process.env.NODE_ENV === 'production',
 });
 const authRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 20 });
-const emailRateLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, limit: 30 });
 const allowedOrigins = getAllowedOrigins();
 
 function isTrustedRequestOrigin(request) {
@@ -552,6 +250,23 @@ function isTrustedRequestOrigin(request) {
 }
 
 app.disable('x-powered-by');
+app.post('/api/webhooks/resend', express.raw({ type: 'application/json', limit: '256kb' }), (request, response) => {
+  const webhookSecret = process.env.RESEND_WEBHOOK_SECRET?.trim();
+  if (!resendProvider || !webhookSecret) {
+    response.status(503).json({ message: 'Email webhook verification is not configured.' });
+    return;
+  }
+  try {
+    const event = resendProvider.verifyWebhook(request.body.toString('utf8'), {
+      id: request.get('svix-id'),
+      timestamp: request.get('svix-timestamp'),
+      signature: request.get('svix-signature'),
+    }, webhookSecret);
+    response.json(recordResendWebhook(database, event));
+  } catch {
+    response.status(400).json({ message: 'Invalid webhook signature.' });
+  }
+});
 app.use('/api', (request, response, next) => cors({
   credentials: true,
   origin(origin, callback) {
@@ -679,22 +394,102 @@ app.post('/api/auth/register', authRateLimit, async (request, response) => {
       issuedCards: [],
     });
 
-    createDatabaseAccount(database, newAccount);
+    createDatabaseAccount(database, newAccount, {
+      afterInsert(db, createdAt) {
+        const verification = issueActionToken(db, { userId: newAccount.id, purpose: 'email-verification', lifetimeMs: 24 * 60 * 60 * 1000 });
+        enqueueEmail(db, {
+          idempotencyKey: `email:welcome:${newAccount.id}`, eventType: 'account.created', aggregateType: 'user', aggregateId: newAccount.id,
+          recipient: newAccount.email, recipientUserId: newAccount.id, templateId: 'welcome',
+          payload: { name: newAccount.name, accountLast4: accountNumber.slice(-4) }, createdAt,
+        });
+        enqueueEmail(db, {
+          idempotencyKey: `email:verification:${newAccount.id}`, eventType: 'account.email-verification-requested', aggregateType: 'user', aggregateId: newAccount.id,
+          recipient: newAccount.email, recipientUserId: newAccount.id, templateId: 'email-verification',
+          payload: { name: newAccount.name, actionUrl: `${getAppBaseUrl()}/verify-email?token=${encodeURIComponent(verification.token)}` }, createdAt,
+        });
+      },
+    });
     const loginResult = await authService.login(normalizedEmailAddress, password);
     authService.setSessionCookie(response, loginResult.token);
 
-    let emailQueued = false;
-    try {
-      const emailResult = await sendWelcomeEmail({ name: newAccount.name, email: newAccount.email, accountNumber });
-      emailQueued = emailResult.ok;
-    } catch {
-      emailQueued = false;
-    }
-
     broadcastEvent('accounts');
-    response.status(201).json({ user: sanitizeAccount(newAccount), emailQueued });
+    scheduleEmailProcessing();
+    response.status(201).json({ user: sanitizeAccount(newAccount), emailQueued: true });
   } catch {
     response.status(500).json({ message: 'Unable to create the account right now.' });
+  }
+});
+
+app.post('/api/auth/request-password-reset', authRateLimit, (request, response) => {
+  const email = normalizeEmail(request.body?.email);
+  if (isValidEmail(email)) {
+    const user = database.prepare("SELECT id, name, email FROM users WHERE email = ? AND role = 'user' AND status != 'Suspended'").get(email);
+    if (user) {
+      database.transaction(() => {
+        const reset = issueActionToken(database, { userId: user.id, purpose: 'password-reset', lifetimeMs: 30 * 60 * 1000 });
+        enqueueEmail(database, {
+          idempotencyKey: `email:password-reset:${reset.id}`, eventType: 'account.password-reset-requested', aggregateType: 'user', aggregateId: user.id,
+          recipient: user.email, recipientUserId: user.id, templateId: 'password-reset',
+          payload: { name: user.name, actionUrl: `${getAppBaseUrl()}/reset-password?token=${encodeURIComponent(reset.token)}` },
+        });
+      }).immediate();
+      scheduleEmailProcessing();
+    }
+  }
+  response.status(202).json({ message: 'If that account is eligible, a password-reset email has been queued.' });
+});
+
+app.post('/api/auth/reset-password', authRateLimit, async (request, response) => {
+  const token = String(request.body?.token ?? '');
+  const password = String(request.body?.password ?? '');
+  if (!token || password.length < 8) {
+    response.status(400).json({ message: 'Enter a valid reset link and a password of at least 8 characters.' });
+    return;
+  }
+  const passwordHash = await hashPassword(password);
+  try {
+    database.transaction(() => {
+      const action = consumeActionToken(database, { token, purpose: 'password-reset' });
+      if (!action) throw new Error('INVALID_RESET_TOKEN');
+      const user = database.prepare("SELECT id, name, email FROM users WHERE id = ? AND role = 'user'").get(action.user_id);
+      if (!user) throw new Error('INVALID_RESET_TOKEN');
+      const changedAt = new Date().toISOString();
+      database.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(passwordHash, changedAt, user.id);
+      database.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(Date.now(), user.id);
+      enqueueEmail(database, {
+        idempotencyKey: `email:password-changed:${action.id}`, eventType: 'account.password-changed', aggregateType: 'user', aggregateId: user.id,
+        recipient: user.email, recipientUserId: user.id, templateId: 'password-changed', payload: { name: user.name, occurredAt: changedAt }, createdAt: changedAt,
+      });
+      database.prepare("INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at) VALUES (?, 'account.password-reset', 'user', ?, '{}', ?)").run(user.id, user.id, changedAt);
+    }).immediate();
+    scheduleEmailProcessing();
+    response.json({ message: 'Your password has been reset. Sign in with the new password.' });
+  } catch (error) {
+    if (error?.message === 'INVALID_RESET_TOKEN') {
+      response.status(400).json({ message: 'This reset link is invalid or expired.' });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to reset the password right now.' });
+  }
+});
+
+app.post('/api/auth/verify-email', authRateLimit, (request, response) => {
+  try {
+    const verifiedAt = new Date().toISOString();
+    const userId = database.transaction(() => {
+      const action = consumeActionToken(database, { token: request.body?.token, purpose: 'email-verification' });
+      if (!action) throw new Error('INVALID_VERIFICATION_TOKEN');
+      database.prepare('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?').run(verifiedAt, verifiedAt, action.user_id);
+      database.prepare("INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at) VALUES (?, 'account.email-verified', 'user', ?, '{}', ?)").run(action.user_id, action.user_id, verifiedAt);
+      return action.user_id;
+    }).immediate();
+    response.json({ message: 'Your email address has been verified.', userId });
+  } catch (error) {
+    if (error?.message === 'INVALID_VERIFICATION_TOKEN') {
+      response.status(400).json({ message: 'This verification link is invalid or expired.' });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to verify the email address right now.' });
   }
 });
 
@@ -767,6 +562,7 @@ app.post('/api/transfers/internal', authService.requireAuth, async (request, res
       idempotencyKey: request.get('Idempotency-Key'),
     });
     broadcastEvent('accounts');
+    scheduleEmailProcessing();
     response.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
     if (error instanceof TransactionError) {
@@ -788,6 +584,7 @@ app.post('/api/admin/balance-adjustments', authService.requireAuth, authService.
       idempotencyKey: request.get('Idempotency-Key'),
     });
     broadcastEvent('accounts');
+    scheduleEmailProcessing();
     response.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
     if (error instanceof TransactionError) {
@@ -807,6 +604,7 @@ app.patch('/api/admin/accounts/:userId/status', authService.requireAuth, authSer
       expectedUpdatedAt: request.body?.expectedUpdatedAt,
     });
     broadcastEvent('accounts');
+    scheduleEmailProcessing();
     response.json(result);
   } catch (error) {
     if (error instanceof AccountManagementError) {
@@ -825,6 +623,7 @@ app.post('/api/admin/accounts/:userId/verify', authService.requireAuth, authServ
       expectedUpdatedAt: request.body?.expectedUpdatedAt,
     });
     broadcastEvent('accounts');
+    scheduleEmailProcessing();
     response.json(result);
   } catch (error) {
     if (error instanceof AccountManagementError) {
@@ -891,6 +690,7 @@ app.post('/api/withdrawals', authService.requireAuth, async (request, response) 
       idempotencyKey: request.get('Idempotency-Key'),
     });
     broadcastEvent('withdrawals');
+    scheduleEmailProcessing();
     response.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
     if (error instanceof WithdrawalError) {
@@ -912,6 +712,7 @@ app.post('/api/admin/withdrawals/:withdrawalId/decision', authService.requireAut
     });
     broadcastEvent('withdrawals');
     broadcastEvent('accounts');
+    scheduleEmailProcessing();
     response.json(result);
   } catch (error) {
     if (error instanceof WithdrawalError) {
@@ -932,6 +733,7 @@ app.post('/api/withdrawals/:withdrawalId/code', authService.requireAuth, async (
     });
     broadcastEvent('withdrawals');
     broadcastEvent('accounts');
+    scheduleEmailProcessing();
     response.json(result);
   } catch (error) {
     if (error instanceof WithdrawalError) {
@@ -951,6 +753,7 @@ app.post('/api/withdrawals/:withdrawalId/expire', authService.requireAuth, (requ
     });
     broadcastEvent('withdrawals');
     broadcastEvent('accounts');
+    scheduleEmailProcessing();
     response.json(result);
   } catch (error) {
     if (error instanceof WithdrawalError) {
@@ -961,90 +764,69 @@ app.post('/api/withdrawals/:withdrawalId/expire', authService.requireAuth, (requ
   }
 });
 
-app.post('/api/emails/welcome', emailRateLimit, authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
-  const { name, email, accountNumber } = request.body ?? {};
-
-  if (!isValidEmailHeader(name, 120) || !isValidEmail(email) || !/^\d{10}$/.test(String(accountNumber ?? '').replace(/\D/g, ''))) {
-    response.status(400).json({ ok: false, message: 'Enter a valid name, email, and 10-digit account number.' });
+function handleCommunicationError(response, error, fallbackMessage) {
+  if (error instanceof CommunicationError) {
+    response.status(error.status).json({ code: error.code, message: error.message });
     return;
   }
+  response.status(500).json({ message: fallbackMessage });
+}
 
+app.post('/api/admin/communications/preview', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
   try {
-    const result = await sendWelcomeEmail({ name, email, accountNumber });
-
-    if (!result.ok && result.configured === false) {
-      response.status(503).json(result);
-      return;
-    }
-
-    response.json(result);
-  } catch {
-    response.status(500).json({
-      ok: false,
-      configured: true,
-      message: 'Failed to send welcome email.',
-    });
+    response.json(previewCampaign(database, { actorUserId: request.auth.account.id, ...request.body }));
+  } catch (error) {
+    handleCommunicationError(response, error, 'Unable to preview this announcement right now.');
   }
 });
 
-app.post('/api/emails/transfer-received', emailRateLimit, authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
-  const { name, email, amount, fromAccount, toAccount, transferDate } = request.body ?? {};
-
-  if (!isValidEmailHeader(name, 120) || !isValidEmail(email) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount ?? '')) || !isValidEmailHeader(toAccount, 120)) {
-    response.status(400).json({ ok: false, message: 'Enter valid transfer email details.' });
-    return;
-  }
-
+app.post('/api/admin/communications', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
   try {
-    const result = await sendTransferReceivedEmail({ name, email, amount, fromAccount, toAccount, transferDate });
-
-    if (!result.ok && result.configured === false) {
-      response.status(503).json(result);
-      return;
-    }
-
-    response.json(result);
-  } catch {
-    response.status(500).json({
-      ok: false,
-      configured: true,
-      message: 'Failed to send transfer received email.',
+    const result = createCampaign(database, {
+      actorUserId: request.auth.account.id,
+      idempotencyKey: request.get('Idempotency-Key'),
+      ...request.body,
     });
+    broadcastEvent('accounts');
+    broadcastEvent('communications');
+    scheduleEmailProcessing();
+    response.status(result.replayed ? 200 : 202).json(result);
+  } catch (error) {
+    handleCommunicationError(response, error, 'Unable to queue this announcement right now.');
   }
 });
 
-app.post('/api/emails/important-message', emailRateLimit, authService.requireAuth, async (request, response) => {
-  const { name, email, subject, message } = request.body ?? {};
-
-  const normalizedSubject = subject || 'Important message from PNC Bank';
-  if (!isValidEmailHeader(name, 120) || !isValidEmail(email) || !isValidEmailHeader(normalizedSubject) || !String(message ?? '').trim() || String(message).length > 5000) {
-    response.status(400).json({ ok: false, message: 'Enter a valid name, email, subject, and message.' });
-    return;
-  }
-
-  const isAdmin = request.auth.account.role === 'admin';
-  const isOwnAddress = normalizeEmail(request.auth.account.email) === normalizeEmail(email);
-  if (!isAdmin && !isOwnAddress) {
-    response.status(403).json({ ok: false, message: 'You are not authorized to send this message.' });
-    return;
-  }
-
+app.get('/api/admin/communications', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
   try {
-    const result = await sendImportantMessageEmail({ name, email, subject, message });
-
-    if (!result.ok && result.configured === false) {
-      response.status(503).json(result);
-      return;
-    }
-
-    response.json(result);
-  } catch {
-    response.status(500).json({
-      ok: false,
-      configured: true,
-      message: 'Failed to send important message email.',
-    });
+    const campaigns = listCampaigns(database, { actorUserId: request.auth.account.id });
+    const totals = database.prepare(`
+      SELECT COUNT(*) attempted,
+        SUM(CASE WHEN status IN ('pending', 'processing') THEN 1 ELSE 0 END) pending,
+        SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) accepted,
+        SUM(CASE WHEN provider_status = 'delivered' THEN 1 ELSE 0 END) delivered,
+        SUM(CASE WHEN status IN ('failed', 'suppressed') THEN 1 ELSE 0 END) failed,
+        SUM(CASE WHEN provider_status = 'bounced' THEN 1 ELSE 0 END) bounced,
+        SUM(CASE WHEN provider_status = 'complained' THEN 1 ELSE 0 END) complained
+      FROM email_outbox
+    `).get();
+    response.json({ campaigns, totals, provider: { configured: emailProcessor.configured, mode: emailProcessor.mode } });
+  } catch (error) {
+    handleCommunicationError(response, error, 'Unable to load communication history right now.');
   }
+});
+
+app.post('/api/admin/communications/:campaignId/retry', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
+  try {
+    const result = retryCampaign(database, { actorUserId: request.auth.account.id, campaignId: request.params.campaignId });
+    scheduleEmailProcessing();
+    response.json(result);
+  } catch (error) {
+    handleCommunicationError(response, error, 'Unable to retry failed deliveries right now.');
+  }
+});
+
+app.use('/api/emails', authService.requireAuth, (_request, response) => {
+  response.status(410).json({ message: 'Direct email endpoints were retired. Use the event-driven communication service.' });
 });
 
 app.get('/api/events', authService.requireAuth, (request, response) => {
@@ -1086,9 +868,14 @@ if (existsSync(distDir)) {
 
 export async function startServer() {
   await ensureAccountsFile();
-  return app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     console.log(`PNC app server running on http://${host}:${port}`);
   });
+  const emailInterval = setInterval(() => void processEmailOutbox(), 30_000);
+  emailInterval.unref();
+  server.on('close', () => clearInterval(emailInterval));
+  scheduleEmailProcessing();
+  return server;
 }
 
 export { app };
