@@ -7,7 +7,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createAuthService } from './auth.js';
+import {
+  createDatabaseAccount,
+  createDatabaseSessionStore,
+  initializeDatabase,
+  readDatabaseAccounts,
+  readDatabaseAdminWorkspace,
+  saveDatabaseAdminWorkspace,
+  updateDatabaseAccountPassword,
+} from './database.js';
 import { hashPassword, isValidEmail, normalizeEmail, sanitizeAccount } from './security.js';
+import { createAdminAdjustment, createInternalTransfer, TransactionError } from './transactions.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
@@ -436,43 +446,25 @@ async function ensureAccountsFile() {
 }
 
 async function readAccounts() {
-  await ensureAccountsFile();
-
-  try {
-    const content = await readFile(accountsFile, 'utf8');
-    const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed.map(normalizeStoredAccount) : defaultAccounts.map(normalizeStoredAccount);
-  } catch {
-    return defaultAccounts.map(normalizeStoredAccount);
-  }
-}
-
-async function saveAccounts(accounts) {
-  await ensureAccountsFile();
-  await writeFile(accountsFile, JSON.stringify(accounts, null, 2), 'utf8');
+  return readDatabaseAccounts(database).map(normalizeStoredAccount);
 }
 
 async function readAdminWorkspace() {
-  await ensureAccountsFile();
-
-  try {
-    const content = await readFile(adminWorkspaceFile, 'utf8');
-    const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
+  return readDatabaseAdminWorkspace(database);
 }
 
 async function saveAdminWorkspace(workspace) {
-  await ensureAccountsFile();
-  await writeFile(adminWorkspaceFile, JSON.stringify(workspace, null, 2), 'utf8');
+  saveDatabaseAdminWorkspace(database, workspace);
 }
 
+if (process.env.NODE_ENV !== 'production') await ensureAccountsFile();
+const database = await initializeDatabase({ dataDir });
 const authService = createAuthService({
   sessionsFile,
+  sessionStore: createDatabaseSessionStore(database),
   readAccounts,
-  saveAccounts,
+  saveAccounts: async () => {},
+  migrateAccountPassword: (userId, passwordHash) => updateDatabaseAccountPassword(database, userId, passwordHash),
   secureCookies: getAppBaseUrl().startsWith('https://') || process.env.NODE_ENV === 'production',
 });
 const authRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 20 });
@@ -584,7 +576,7 @@ app.post('/api/auth/register', authRateLimit, async (request, response) => {
       issuedCards: [],
     });
 
-    await saveAccounts([...accounts, newAccount]);
+    createDatabaseAccount(database, newAccount);
     const loginResult = await authService.login(normalizedEmailAddress, password);
     authService.setSessionCookie(response, loginResult.token);
 
@@ -620,41 +612,15 @@ app.get('/api/accounts', authService.requireAuth, async (_request, response) => 
 });
 
 app.put('/api/accounts', authService.requireAuth, async (request, response) => {
-  const { accounts } = request.body ?? {};
-
-  if (!Array.isArray(accounts)) {
-    response.status(400).json({ message: 'Accounts payload must be an array.' });
-    return;
-  }
-
-  const storedAccounts = await readAccounts();
-  const storedById = new Map(storedAccounts.map((account) => [account.id, account]));
-  const mergedAccounts = accounts.map((account) => {
-    const storedAccount = storedById.get(account.id);
-    const safeAccount = sanitizeAccount(account);
-
-    if (!storedAccount) {
-      return safeAccount;
-    }
-
-    return {
-      ...safeAccount,
-      ...(storedAccount.passwordHash ? { passwordHash: storedAccount.passwordHash } : {}),
-      ...(!storedAccount.passwordHash && storedAccount.password ? { password: storedAccount.password } : {}),
-    };
-  });
-
-  await saveAccounts(mergedAccounts);
-  broadcastEvent('accounts');
-  response.json({ ok: true, updatedAt: new Date().toISOString() });
+  response.status(403).json({ message: 'Account snapshots are read-only. Use an authorized operation endpoint.' });
 });
 
-app.get('/api/admin-workspace', authService.requireAuth, async (_request, response) => {
+app.get('/api/admin-workspace', authService.requireAuth, authService.requireRole('admin'), async (_request, response) => {
   const workspace = await readAdminWorkspace();
   response.json({ workspace, updatedAt: new Date().toISOString() });
 });
 
-app.put('/api/admin-workspace', authService.requireAuth, async (request, response) => {
+app.put('/api/admin-workspace', authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
   const { workspace } = request.body ?? {};
 
   if (!workspace || typeof workspace !== 'object' || Array.isArray(workspace)) {
@@ -665,6 +631,48 @@ app.put('/api/admin-workspace', authService.requireAuth, async (request, respons
   await saveAdminWorkspace(workspace);
   broadcastEvent('admin-workspace');
   response.json({ ok: true, updatedAt: new Date().toISOString() });
+});
+
+app.post('/api/transfers/internal', authService.requireAuth, async (request, response) => {
+  try {
+    const result = createInternalTransfer(database, {
+      senderId: request.auth.account.id,
+      sourceAccount: request.body?.sourceAccount,
+      recipientAccountNumber: request.body?.accountNumber,
+      amount: request.body?.amount,
+      note: request.body?.note,
+      idempotencyKey: request.get('Idempotency-Key'),
+    });
+    broadcastEvent('accounts');
+    response.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    if (error instanceof TransactionError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to complete the transfer right now.' });
+  }
+});
+
+app.post('/api/admin/balance-adjustments', authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
+  try {
+    const result = createAdminAdjustment(database, {
+      adminId: request.auth.account.id,
+      targetUserId: request.body?.targetUserId,
+      accountLabel: request.body?.accountLabel,
+      amount: request.body?.amount,
+      note: request.body?.note,
+      idempotencyKey: request.get('Idempotency-Key'),
+    });
+    broadcastEvent('accounts');
+    response.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    if (error instanceof TransactionError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to post the balance adjustment right now.' });
+  }
 });
 
 app.post('/api/emails/welcome', emailRateLimit, authService.requireAuth, authService.requireRole('admin'), async (request, response) => {

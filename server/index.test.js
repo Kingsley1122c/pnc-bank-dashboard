@@ -44,7 +44,62 @@ test('account API requires a session and never returns password material', async
     headers: { Cookie: sessionCookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ accounts: accountsPayload.accounts }),
   });
-  assert.equal(saveResponse.status, 200);
+  assert.equal(saveResponse.status, 403);
+
+  const userWorkspaceResponse = await fetch(`${baseUrl}/api/admin-workspace`, { headers: { Cookie: sessionCookie } });
+  assert.equal(userWorkspaceResponse.status, 403);
+
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Transfer Recipient', email: 'recipient@example.com', phone: '+1 202 555 0199',
+      password: 'recipient-password', dateOfBirth: '1990-01-01', gender: 'Other',
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const registered = await registerResponse.json();
+  const idempotencyKey = 'server-test-transfer-0001';
+  const transferRequest = {
+    method: 'POST',
+    headers: { Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ sourceAccount: 'Savings', accountNumber: registered.user.accountNumber, amount: '9.00', note: 'Integration test' }),
+  };
+  const transferResponse = await fetch(`${baseUrl}/api/transfers/internal`, transferRequest);
+  assert.equal(transferResponse.status, 201);
+  const transfer = await transferResponse.json();
+  assert.equal(transfer.receipt.status, 'Pending Verification');
+  assert.equal(transfer.sender.accounts.find((account) => account.label === 'Savings').amount, 72931.67);
+
+  const replayResponse = await fetch(`${baseUrl}/api/transfers/internal`, transferRequest);
+  assert.equal(replayResponse.status, 200);
+  const replay = await replayResponse.json();
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.transactionId, transfer.transactionId);
+  assert.equal(replay.sender.accounts.find((account) => account.label === 'Savings').amount, 72931.67);
+
+  const deniedAdjustment = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
+    method: 'POST',
+    headers: { Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'denied-adjustment-0001' },
+    body: JSON.stringify({ targetUserId: registered.user.id, accountLabel: 'Current', amount: '5.00' }),
+  });
+  assert.equal(deniedAdjustment.status, 403);
+
+  const adminLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: 'admin@pnc.bank', password: 'admin123' }),
+  });
+  assert.equal(adminLoginResponse.status, 200);
+  const adminCookie = adminLoginResponse.headers.get('set-cookie')?.split(';')[0];
+  const adjustmentResponse = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'approved-adjustment-0001' },
+    body: JSON.stringify({ targetUserId: registered.user.id, accountLabel: 'Current', amount: '5.00', note: 'Integration test' }),
+  });
+  assert.equal(adjustmentResponse.status, 201);
+  const adjustment = await adjustmentResponse.json();
+  assert.equal(adjustment.account.accounts.find((account) => account.label === 'Current').amount, 5);
 
   const secondLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',

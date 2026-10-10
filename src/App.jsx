@@ -1297,6 +1297,14 @@ function getSharedAdminWorkspaceApiUrl() {
   return `${getSharedApiBaseUrl()}/api/admin-workspace`;
 }
 
+function getInternalTransferApiUrl() {
+  return `${getSharedApiBaseUrl()}/api/transfers/internal`;
+}
+
+function getAdminBalanceAdjustmentApiUrl() {
+  return `${getSharedApiBaseUrl()}/api/admin/balance-adjustments`;
+}
+
 function getSharedEventsApiUrl() {
   return `${getSharedApiBaseUrl()}/api/events`;
 }
@@ -1357,6 +1365,44 @@ async function fetchAuthSession() {
 
 async function requestLogout() {
   await fetch(getAuthApiUrl('logout'), { method: 'POST', credentials: 'include' }).catch(() => null);
+}
+
+async function requestInternalTransfer(transfer, idempotencyKey) {
+  const response = await fetch(getInternalTransferApiUrl(), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: JSON.stringify(transfer),
+  });
+  const payload = await readApiPayload(response);
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? 'Unable to complete the transfer right now.');
+  }
+
+  return payload;
+}
+
+async function requestAdminBalanceAdjustment(adjustment, idempotencyKey) {
+  const response = await fetch(getAdminBalanceAdjustmentApiUrl(), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: JSON.stringify(adjustment),
+  });
+  const payload = await readApiPayload(response);
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? 'Unable to post the balance adjustment right now.');
+  }
+
+  return payload;
 }
 
 async function fetchRemoteAccounts() {
@@ -2042,20 +2088,14 @@ function App() {
     async function loadSharedAccounts() {
       try {
         const remoteAccounts = (await fetchRemoteAccounts()).map(normalizeAccountDefaults);
-        const mergedAccounts = mergeAccountsWithRemote(latestAccountsRef.current, remoteAccounts);
         const remoteSnapshot = JSON.stringify(remoteAccounts);
-        const mergedSnapshot = JSON.stringify(mergedAccounts);
-
-        if (mergedSnapshot !== remoteSnapshot) {
-          await saveRemoteAccounts(mergedAccounts);
-        }
 
         if (cancelled) {
           return;
         }
 
-        lastRemoteAccountsSnapshotRef.current = mergedSnapshot;
-        setAccounts(mergedAccounts);
+        lastRemoteAccountsSnapshotRef.current = remoteSnapshot;
+        setAccounts(remoteAccounts);
       } catch {
         return;
       } finally {
@@ -2107,7 +2147,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!serverAuthenticated) {
+    if (!serverAuthenticated || activeUser?.role !== 'admin') {
       return undefined;
     }
 
@@ -2150,39 +2190,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [serverAuthenticated]);
-
-  useEffect(() => {
-    if (!remoteAccountsReady || !serverAuthenticated) {
-      return;
-    }
-
-    const snapshot = JSON.stringify(accounts);
-
-    if (snapshot === lastRemoteAccountsSnapshotRef.current) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function pushSharedAccounts() {
-      try {
-        await saveRemoteAccounts(accounts);
-
-        if (!cancelled) {
-          lastRemoteAccountsSnapshotRef.current = snapshot;
-        }
-      } catch {
-        return;
-      }
-    }
-
-    pushSharedAccounts();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [accounts, remoteAccountsReady, serverAuthenticated]);
+  }, [activeUser?.role, serverAuthenticated]);
 
   useEffect(() => {
     if (!remoteAccountsReady || !serverAuthenticated) {
@@ -2339,7 +2347,7 @@ function App() {
   }, [adminWorkspaceSnapshot]);
 
   useEffect(() => {
-    if (!remoteAdminWorkspaceReady || !serverAuthenticated) {
+    if (!remoteAdminWorkspaceReady || !serverAuthenticated || activeUser?.role !== 'admin') {
       return;
     }
 
@@ -2368,10 +2376,10 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [adminWorkspaceSnapshot, remoteAdminWorkspaceReady, serverAuthenticated]);
+  }, [activeUser?.role, adminWorkspaceSnapshot, remoteAdminWorkspaceReady, serverAuthenticated]);
 
   useEffect(() => {
-    if (!remoteAdminWorkspaceReady || !serverAuthenticated || typeof window === 'undefined') {
+    if (!remoteAdminWorkspaceReady || !serverAuthenticated || activeUser?.role !== 'admin' || typeof window === 'undefined') {
       return;
     }
 
@@ -2406,7 +2414,7 @@ function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [accounts, remoteAdminWorkspaceReady, serverAuthenticated]);
+  }, [accounts, activeUser?.role, remoteAdminWorkspaceReady, serverAuthenticated]);
 
   useEffect(() => {
     if (!serverAuthenticated || typeof window === 'undefined') {
@@ -2459,7 +2467,7 @@ function App() {
           refreshSharedAccounts();
         }
 
-        if (payload.type === 'admin-workspace') {
+        if (payload.type === 'admin-workspace' && activeUser?.role === 'admin') {
           refreshAdminWorkspace();
         }
       } catch {
@@ -2470,7 +2478,7 @@ function App() {
     return () => {
       eventSource.close();
     };
-  }, [serverAuthenticated]);
+  }, [activeUser?.role, serverAuthenticated]);
 
   const userTransactionFeed = useMemo(() => {
     if (!activeUser) {
@@ -2822,144 +2830,31 @@ function App() {
     };
   }
 
-  function handleSubmitTransfer(transferForm) {
+  async function handleSubmitTransfer(transferForm) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Transfers are only available for signed-in retail users.' };
     }
 
-    const cleanedAccountNumber = transferForm.accountNumber.replace(/\D/g, '');
-    const amountValue = Number(transferForm.amount);
-
-    if (cleanedAccountNumber.length !== 10) {
-      return { ok: false, message: 'Enter a valid 10-digit registered PNC account number.' };
+    try {
+      const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `transfer-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const result = await requestInternalTransfer(transferForm, idempotencyKey);
+      setAccounts((current) => current.map((account) => {
+        if (account.id === result.sender.id) return { ...account, accounts: result.sender.accounts };
+        if (account.id === result.recipient.id) return { ...account, accounts: result.recipient.accounts };
+        return account;
+      }));
+      setAdminTransactionRecords((current) => [result.receipt, ...current]);
+      setAdminNotice(`Transfer ${result.receipt.id} was authorized by the server.`);
+      return {
+        ok: true,
+        receipt: result.receipt,
+        message: result.receipt.status === 'Pending Verification'
+          ? `${transferForm.amount} was sent to ${result.receipt.name}, but the funds are on hold until PNC verification is complete.`
+          : `${transferForm.amount} sent to ${result.receipt.name} from ${transferForm.sourceAccount}.`,
+      };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to complete the transfer right now.' };
     }
-
-    const pncRecipient = accounts.find(
-      (account) =>
-        account.role !== 'admin'
-        && account.id !== activeUser.id
-        && String(account.accountNumber ?? '').replace(/\D/g, '') === cleanedAccountNumber,
-    );
-    const recipientVerified = pncRecipient ? pncRecipient.verificationStatus === 'Verified' : true;
-
-    if (!pncRecipient) {
-      return { ok: false, message: 'Transfer failed. Only registered PNC account numbers are allowed.' };
-    }
-
-    const resolvedRecipient = pncRecipient.name;
-
-    const debitResult = debitActiveUserAccount(transferForm.sourceAccount, amountValue);
-
-    if (!debitResult.ok) {
-      return debitResult;
-    }
-
-    const transactionId = `TX-${Math.floor(1000 + Math.random() * 9000)}`;
-    const receipt = {
-      id: transactionId,
-      name: resolvedRecipient,
-      type: 'Transfer',
-      amount: `-${formatCurrency(amountValue)}`,
-      date: getDisplayDate(),
-      status: pncRecipient && !recipientVerified ? 'Pending Verification' : 'Completed',
-      owner: activeUser.name,
-      reviewStatus: pncRecipient && !recipientVerified ? 'Pending Review' : amountValue >= 5000 ? 'Pending Review' : 'Monitored',
-      destination: `PNC Bank • **** ${cleanedAccountNumber.slice(-4)}`,
-      note: transferForm.note.trim(),
-    };
-
-    const internalTransferReceipt = pncRecipient && recipientVerified
-      ? {
-          id: `TX-${Math.floor(1000 + Math.random() * 9000)}`,
-          name: activeUser.name,
-          type: 'Income',
-          amount: `+${formatCurrency(amountValue)}`,
-          date: getDisplayDate(),
-          status: 'Completed',
-          owner: pncRecipient.name,
-          reviewStatus: 'Monitored',
-          destination: `PNC Bank • **** ${cleanedAccountNumber.slice(-4)}`,
-          note: transferForm.note.trim() || `Incoming PNC transfer from ${activeUser.name}`,
-        }
-      : null;
-
-    if (pncRecipient && recipientVerified) {
-      setAccounts((current) =>
-        current.map((account) => {
-          if (account.id !== pncRecipient.id) {
-            return account;
-          }
-
-          const targetLabel = account.accounts.some((entry) => entry.label === 'Current')
-            ? 'Current'
-            : account.accounts[0]?.label;
-
-          return {
-            ...account,
-            accounts: account.accounts.map((entry) =>
-              entry.label === targetLabel
-                ? { ...entry, amount: Number((entry.amount + amountValue).toFixed(2)) }
-                : entry,
-            ),
-          };
-        }),
-      );
-    }
-
-    if (pncRecipient && !recipientVerified) {
-      const heldMessage = `Dear ${pncRecipient.name}, ${activeUser.name} have sent you ${formatCurrency(amountValue)} and you cant recieve this money until you are verified by PNC please contact customer service to complete account verification, thank you.`;
-
-      setAccounts((current) =>
-        current.map((account) => {
-          if (account.id !== pncRecipient.id) {
-            return account;
-          }
-
-          return {
-            ...account,
-            notifications: [
-              {
-                id: `NOTICE-${transactionId}`,
-                type: 'verification-hold',
-                message: heldMessage,
-              },
-              ...(account.notifications ?? []),
-            ],
-            pendingIncomingTransfers: [
-              {
-                id: `HOLD-${transactionId}`,
-                senderName: activeUser.name,
-                senderId: activeUser.id,
-                amountValue,
-                transactionId,
-                note: transferForm.note.trim(),
-                createdAt: getDisplayDate(),
-              },
-              ...(account.pendingIncomingTransfers ?? []),
-            ],
-          };
-        }),
-      );
-    }
-
-    setAdminTransactionRecords((current) => (internalTransferReceipt ? [receipt, internalTransferReceipt, ...current] : [receipt, ...current]));
-    setAdminNotice(
-      pncRecipient && !recipientVerified
-        ? `Transfer from ${activeUser.name} is on hold until ${resolvedRecipient} is verified.`
-        : `Transfer request received from ${activeUser.name}.`,
-    );
-    pushAdminActivity(`${activeUser.name} submitted transfer ${receipt.id} to ${resolvedRecipient}.`, {
-      promoteToLiveFeed: amountValue >= 5000,
-    });
-
-    return {
-      ok: true,
-      receipt,
-      message:
-        pncRecipient && !recipientVerified
-          ? `${formatCurrency(amountValue)} was sent to ${resolvedRecipient}, but the funds are on hold until the recipient is verified by PNC.`
-          : `${formatCurrency(amountValue)} sent to ${resolvedRecipient} from ${debitResult.sourceLabel}.`,
-    };
   }
 
   function handleSubmitBillPayment(billForm) {
@@ -3781,7 +3676,7 @@ function App() {
     setAdminCreditForm((current) => ({ ...current, [field]: value }));
   }
 
-  function handleAdminAddFunds() {
+  async function handleAdminAddFunds() {
     if (!selectedAdminRecord) {
       setAdminFundingResult({
         ok: false,
@@ -3844,77 +3739,49 @@ function App() {
       return;
     }
 
-    const transactionId = `ADM-${Math.floor(100000 + Math.random() * 900000)}`;
-    const createdAt = new Date().toISOString();
     const note = adminCreditForm.note.trim();
-
-    setAccounts((current) =>
-      current.map((account) => {
-        if (account.id !== targetAccount.id) {
-          return account;
-        }
-
-        return {
-          ...account,
-          accounts: account.accounts.map((entry) =>
-            entry.label === targetLabel
-              ? { ...entry, amount: Number((entry.amount + amountValue).toFixed(2)) }
-              : entry,
-          ),
-        };
-      }),
-    );
-
-    setAdminTransactionRecords((current) => [
-      {
-        id: transactionId,
-        name: targetAccount.name,
+    try {
+      const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `adjustment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const result = await requestAdminBalanceAdjustment({
+        targetUserId: targetAccount.id,
+        accountLabel: targetLabel,
+        amount: adminCreditForm.amount,
+        note,
+      }, idempotencyKey);
+      const receipt = result.receipt;
+      setAccounts((current) => current.map((account) => account.id === result.account.id ? { ...account, accounts: result.account.accounts } : account));
+      setAdminTransactionRecords((current) => [{
+        id: receipt.transactionId,
+        name: receipt.userName,
         type: 'Admin Credit',
-        amount: `+${formatCurrency(amountValue)}`,
+        amount: `+${formatCurrency(receipt.amount)}`,
         date: 'Just now',
         status: 'Completed',
         reviewStatus: 'Reviewed',
-        destination: `PNC Bank • ${targetLabel}`,
-        note: note || 'Admin funding action',
-      },
-      ...current,
-    ]);
-
-    setAdminUserRecords((current) =>
-      current.map((user) =>
-        user.accountId === selectedAdminRecord.accountId
-          ? { ...user, lastActivity: 'Admin funding applied' }
-          : user,
-      ),
-    );
-
-    setAdminCreditForm({ amount: '', accountLabel: targetLabel, note: '' });
-    setAdminFundingReceipt({
-      transactionId,
-      accountId: selectedAdminRecord.accountId,
-      userName: selectedAdminRecord.name,
-      accountLabel: targetLabel,
-      amount: amountValue,
-      note,
-      createdAt,
-    });
-    setAdminFundingResult({
-      ok: true,
-      kind: 'admin-funding',
-      title: 'Funding posted successfully',
-      message: `${formatCurrency(amountValue)} was credited to ${selectedAdminRecord.name}'s ${targetLabel} account.`,
-      amount: amountValue,
-      accountLabel: targetLabel,
-      transactionId,
-      customerName: selectedAdminRecord.name,
-      createdAt,
-      auditLabel: 'Audit Logged',
-    });
-    setAdminNotice(`${formatCurrency(amountValue)} was added to ${selectedAdminRecord.name}'s ${targetLabel} account.`);
-    pushAdminActivity(`${activeUser?.name ?? 'Admin'} added ${formatCurrency(amountValue)} to ${selectedAdminRecord.name}.`, {
-      promoteToLiveFeed: true,
-    });
-
+        destination: `PNC Bank • ${receipt.accountLabel}`,
+        note: receipt.note || 'Admin funding action',
+      }, ...current]);
+      setAdminUserRecords((current) => current.map((user) => user.accountId === receipt.accountId ? { ...user, lastActivity: 'Admin funding applied' } : user));
+      setAdminCreditForm({ amount: '', accountLabel: receipt.accountLabel, note: '' });
+      setAdminFundingReceipt(receipt);
+      setAdminFundingResult({
+        ok: true,
+        kind: 'admin-funding',
+        title: 'Funding posted successfully',
+        message: `${formatCurrency(receipt.amount)} was credited to ${receipt.userName}'s ${receipt.accountLabel} account.`,
+        amount: receipt.amount,
+        accountLabel: receipt.accountLabel,
+        transactionId: receipt.transactionId,
+        customerName: receipt.userName,
+        createdAt: receipt.createdAt,
+        auditLabel: 'Audit Logged',
+      });
+      setAdminNotice(`${formatCurrency(receipt.amount)} was added to ${receipt.userName}'s ${receipt.accountLabel} account.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to post customer funds right now.';
+      setAdminNotice(message);
+      setAdminFundingResult({ ok: false, kind: 'admin-funding', title: 'Funding could not be posted', message, createdAt: new Date().toISOString(), auditLabel: 'Needs Review' });
+    }
   }
 
   function handleSaveUserLimits() {

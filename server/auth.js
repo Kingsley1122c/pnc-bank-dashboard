@@ -48,7 +48,7 @@ function sessionCookie(token, { secure, maxAgeSeconds = SESSION_LIFETIME_MS / 10
   return parts.join('; ');
 }
 
-export function createAuthService({ sessionsFile, readAccounts, saveAccounts, secureCookies = false, now = () => Date.now() }) {
+export function createAuthService({ sessionsFile, sessionStore = null, readAccounts, saveAccounts, migrateAccountPassword = null, secureCookies = false, now = () => Date.now() }) {
   let sessions = new Map();
   let loaded = false;
   let writePromise = Promise.resolve();
@@ -74,6 +74,10 @@ export function createAuthService({ sessionsFile, readAccounts, saveAccounts, se
   }
 
   async function removeExpiredSessions() {
+    if (sessionStore) {
+      sessionStore.deleteExpired(now());
+      return;
+    }
     await loadSessions();
     let changed = false;
 
@@ -105,7 +109,11 @@ export function createAuthService({ sessionsFile, readAccounts, saveAccounts, se
     if (!account.passwordHash) {
       account.passwordHash = await hashPassword(password);
       delete account.password;
-      await saveAccounts(accounts);
+      if (migrateAccountPassword) {
+        await migrateAccountPassword(account.id, account.passwordHash);
+      } else {
+        await saveAccounts(accounts);
+      }
     }
 
     await removeExpiredSessions();
@@ -117,8 +125,13 @@ export function createAuthService({ sessionsFile, readAccounts, saveAccounts, se
       createdAt,
       expiresAt: createdAt + SESSION_LIFETIME_MS,
     };
-    sessions.set(hashSessionToken(token), session);
-    await persistSessions();
+    const tokenHash = hashSessionToken(token);
+    if (sessionStore) {
+      sessionStore.set(tokenHash, session);
+    } else {
+      sessions.set(tokenHash, session);
+      await persistSessions();
+    }
 
     return { token, session, account: sanitizeAccount(account) };
   }
@@ -127,14 +140,18 @@ export function createAuthService({ sessionsFile, readAccounts, saveAccounts, se
     const token = getSessionToken(request);
     if (!token) return null;
 
-    await loadSessions();
     const tokenHash = hashSessionToken(token);
-    const session = sessions.get(tokenHash);
+    if (!sessionStore) await loadSessions();
+    const session = sessionStore ? sessionStore.get(tokenHash) : sessions.get(tokenHash);
 
     if (!session || session.expiresAt <= now()) {
       if (session) {
-        sessions.delete(tokenHash);
-        await persistSessions();
+        if (sessionStore) {
+          sessionStore.delete(tokenHash);
+        } else {
+          sessions.delete(tokenHash);
+          await persistSessions();
+        }
       }
       return null;
     }
@@ -150,8 +167,13 @@ export function createAuthService({ sessionsFile, readAccounts, saveAccounts, se
     const token = getSessionToken(request);
     if (!token) return;
 
-    await loadSessions();
-    if (sessions.delete(hashSessionToken(token))) await persistSessions();
+    const tokenHash = hashSessionToken(token);
+    if (sessionStore) {
+      sessionStore.delete(tokenHash);
+    } else {
+      await loadSessions();
+      if (sessions.delete(tokenHash)) await persistSessions();
+    }
   }
 
   function setSessionCookie(response, token) {
