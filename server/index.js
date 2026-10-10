@@ -263,7 +263,12 @@ app.post('/api/webhooks/resend', express.raw({ type: 'application/json', limit: 
       signature: request.get('webhook-signature') || request.get('svix-signature'),
     }, webhookSecret);
     response.json(recordResendWebhook(database, event));
-  } catch {
+  } catch (error) {
+    console.warn('Resend webhook verification failed.', {
+      error: error?.message || 'Unknown verification error',
+      hasWebhookHeaders: Boolean(request.get('webhook-id') && request.get('webhook-timestamp') && request.get('webhook-signature')),
+      hasSvixHeaders: Boolean(request.get('svix-id') && request.get('svix-timestamp') && request.get('svix-signature')),
+    });
     response.status(400).json({ message: 'Invalid webhook signature.' });
   }
 });
