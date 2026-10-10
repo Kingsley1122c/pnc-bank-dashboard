@@ -13,13 +13,26 @@ Keep `EMAIL_MODE=disabled` until the sender domain and controlled-recipient test
 ## Render custom domain
 
 1. Open the `pnc-bank-dashboard` web service in Render.
-2. Add `pnc-core.com` and, if desired, `www.pnc-core.com` under **Settings > Custom Domains**.
-3. Copy the exact DNS type, host, and target shown by Render for each domain.
-4. Do not enable production email links until Render reports the custom domain as verified and TLS is active.
+2. Under **Settings > Custom Domains**, add the preferred hostname (`pnc-core.com` for an apex-primary setup or `www.pnc-core.com` for a www-primary setup). Render automatically adds the counterpart and redirects it to the hostname that was added.
+3. Copy the exact DNS type, host, and target shown by Render for each generated row. Do not use a target copied from another service or from an example.
+4. After DNS propagation, click **Verify** for the domain and wait for Render to report that TLS is active.
+5. Keep the working `pnc-bank-dashboard.onrender.com` subdomain enabled until both custom hostnames pass HTTPS and health checks.
+6. Do not enable production email links until Render reports the custom domain as verified and TLS is active.
+
+As observed on October 10, 2026, the workspace's two included custom-domain slots are used by `nivoracore.com` and `www.nivoracore.com` on the `nivora-core` service. Those domains must remain attached and operational. The approved PNC configuration adds `pnc-core.com` through this repository's Blueprint; Render automatically adds `www.pnc-core.com` as the redirect counterpart. Render's published overage price is `$0.25` per additional domain per month, so the approved maximum incremental cost for the PNC pair is `$0.50` per month. This does not require a workspace plan upgrade.
 
 ## Namecheap DNS
 
 In **Namecheap > Domain List > pnc-core.com > Advanced DNS**, create only the records displayed by Render. The required rows cannot be filled with verified values from this repository because Render assigns and displays the authoritative targets in its dashboard.
+
+The authoritative Namecheap nameservers returned the following website records on October 10, 2026 (TTL 1800):
+
+| Host | Type | Current value | Status |
+| --- | --- | --- | --- |
+| `@` | `A` | `162.255.119.159` | Conflicts with Render; points the apex away from the Render service |
+| `www` | `CNAME` | `parkingpage.namecheap.com` | Conflicts with Render; points `www` to Namecheap parking |
+
+Preserve unrelated MX and TXT records. Also check for and remove hostname-conflicting URL Redirect, ALIAS, and `AAAA` records only when updating that same hostname according to Render's displayed instructions. Render does not use IPv6 for custom-domain routing, so an `AAAA` record on `@` or `www` can prevent reliable routing.
 
 Record the verified values here during deployment:
 
@@ -28,7 +41,17 @@ Record the verified values here during deployment:
 | Apex domain | From Render | `@` | From Render custom-domain screen | Automatic |
 | `www` domain | From Render | `www` | From Render custom-domain screen | Automatic |
 
-Remove conflicting Namecheap parking, redirect, A, ALIAS, or CNAME records only after comparing them with Render's instructions. DNS and TLS are considered complete only when Render shows both domains verified and an HTTPS request succeeds.
+Safe update order:
+
+1. Add the preferred custom hostname to the correct Render service and confirm that Render shows both the apex and `www` rows.
+2. Copy the exact displayed DNS values into the table above before editing Namecheap.
+3. In Namecheap, replace only the conflicting `@` website record with Render's displayed apex record.
+4. Replace only the conflicting `www` parking/redirect record with Render's displayed `www` record.
+5. Leave mail-related MX/TXT records and any unrelated subdomains unchanged.
+6. Wait for both authoritative Namecheap nameservers and public resolvers to return the new values, then click **Verify** in Render.
+7. Confirm certificate issuance, HTTPS redirects, and `https://pnc-core.com/api/health` before changing any application URL or disabling the Render subdomain.
+
+DNS and TLS are considered complete only when Render shows both hostnames verified and HTTPS requests succeed.
 
 ## Resend DNS
 
