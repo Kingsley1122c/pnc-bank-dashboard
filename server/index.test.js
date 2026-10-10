@@ -16,6 +16,7 @@ test('account API requires a session and never returns password material', async
 
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  const browserOrigin = 'http://localhost:5173';
   const missingAssetResponse = await fetch(`${baseUrl}/assets/missing-build-asset.js`, { headers: { Origin: 'https://deployment.example' } });
   assert.equal(missingAssetResponse.status, 404);
   assert.equal(missingAssetResponse.headers.get('cache-control'), 'no-store');
@@ -25,10 +26,18 @@ test('account API requires a session and never returns password material', async
 
   const anonymousResponse = await fetch(`${baseUrl}/api/accounts`);
   assert.equal(anonymousResponse.status, 401);
+  const anonymousEventsResponse = await fetch(`${baseUrl}/api/events`);
+  assert.equal(anonymousEventsResponse.status, 401);
+  const originlessLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: 'example@pnc.bank', password: 'example123' }),
+  });
+  assert.equal(originlessLoginResponse.status, 403);
 
   const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { Origin: browserOrigin, 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier: 'example@pnc.bank', password: 'example123' }),
   });
   assert.equal(loginResponse.status, 200);
@@ -43,9 +52,10 @@ test('account API requires a session and never returns password material', async
   assert.equal(body.includes('example123'), false);
 
   const accountsPayload = JSON.parse(body);
+  assert.deepEqual(accountsPayload.accounts.map((account) => account.id), ['USR-0001']);
   const saveResponse = await fetch(`${baseUrl}/api/accounts`, {
     method: 'PUT',
-    headers: { Cookie: sessionCookie, 'Content-Type': 'application/json' },
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ accounts: accountsPayload.accounts }),
   });
   assert.equal(saveResponse.status, 403);
@@ -55,7 +65,7 @@ test('account API requires a session and never returns password material', async
 
   const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { Origin: browserOrigin, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: 'Transfer Recipient', email: 'recipient@example.com', phone: '+1 202 555 0199',
       password: 'recipient-password', dateOfBirth: '1990-01-01', gender: 'Other',
@@ -66,7 +76,7 @@ test('account API requires a session and never returns password material', async
   const idempotencyKey = 'server-test-transfer-0001';
   const transferRequest = {
     method: 'POST',
-    headers: { Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ sourceAccount: 'Savings', accountNumber: registered.user.accountNumber, amount: '9.00', note: 'Integration test' }),
   };
   const transferResponse = await fetch(`${baseUrl}/api/transfers/internal`, transferRequest);
@@ -84,21 +94,26 @@ test('account API requires a session and never returns password material', async
 
   const deniedAdjustment = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
     method: 'POST',
-    headers: { Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'denied-adjustment-0001' },
+    headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'denied-adjustment-0001' },
     body: JSON.stringify({ targetUserId: registered.user.id, accountLabel: 'Current', amount: '5.00' }),
   });
   assert.equal(deniedAdjustment.status, 403);
 
   const adminLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { Origin: browserOrigin, 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier: 'admin@pnc.bank', password: 'admin123' }),
   });
   assert.equal(adminLoginResponse.status, 200);
   const adminCookie = adminLoginResponse.headers.get('set-cookie')?.split(';')[0];
+  const adminAccountsResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { Cookie: adminCookie } });
+  assert.equal(adminAccountsResponse.status, 200);
+  const adminAccounts = (await adminAccountsResponse.json()).accounts;
+  assert.ok(adminAccounts.some((account) => account.id === 'USR-0001'));
+  assert.ok(adminAccounts.some((account) => account.id === registered.user.id));
   const adjustmentResponse = await fetch(`${baseUrl}/api/admin/balance-adjustments`, {
     method: 'POST',
-    headers: { Cookie: adminCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'approved-adjustment-0001' },
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'approved-adjustment-0001' },
     body: JSON.stringify({ targetUserId: registered.user.id, accountLabel: 'Current', amount: '5.00', note: 'Integration test' }),
   });
   assert.equal(adjustmentResponse.status, 201);
@@ -107,7 +122,7 @@ test('account API requires a session and never returns password material', async
 
   const secondLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { Origin: browserOrigin, 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier: 'example@pnc.bank', password: 'example123' }),
   });
   assert.equal(secondLoginResponse.status, 200);

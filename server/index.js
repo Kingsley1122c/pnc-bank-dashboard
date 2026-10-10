@@ -471,6 +471,17 @@ const authRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 20 })
 const emailRateLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, limit: 30 });
 const allowedOrigins = getAllowedOrigins();
 
+function isTrustedRequestOrigin(request) {
+  const normalizedOrigin = request.get('origin')?.replace(/\/$/, '');
+  if (!normalizedOrigin) return false;
+
+  try {
+    return new URL(normalizedOrigin).host === request.get('host') || allowedOrigins.has(normalizedOrigin);
+  } catch {
+    return false;
+  }
+}
+
 app.disable('x-powered-by');
 app.use('/api', (request, response, next) => cors({
   credentials: true,
@@ -497,6 +508,14 @@ app.use('/api', (error, _request, response, next) => {
     return;
   }
   next(error);
+});
+app.use('/api', (request, response, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method) || isTrustedRequestOrigin(request)) {
+    next();
+    return;
+  }
+
+  response.status(403).json({ message: 'A trusted request origin is required.' });
 });
 app.use(express.json({ limit: '2mb' }));
 
@@ -621,9 +640,12 @@ app.post('/api/auth/logout', authService.requireAuth, async (request, response) 
   response.status(204).end();
 });
 
-app.get('/api/accounts', authService.requireAuth, async (_request, response) => {
+app.get('/api/accounts', authService.requireAuth, async (request, response) => {
   const accounts = await readAccounts();
-  response.json({ accounts: accounts.map(sanitizeAccount), updatedAt: new Date().toISOString() });
+  const visibleAccounts = request.auth.account.role === 'admin'
+    ? accounts
+    : accounts.filter((account) => account.id === request.auth.account.id);
+  response.json({ accounts: visibleAccounts.map(sanitizeAccount), updatedAt: new Date().toISOString() });
 });
 
 app.put('/api/accounts', authService.requireAuth, async (request, response) => {
@@ -775,7 +797,7 @@ app.post('/api/emails/important-message', emailRateLimit, authService.requireAut
   }
 });
 
-app.get('/api/events', (request, response) => {
+app.get('/api/events', authService.requireAuth, (request, response) => {
   response.setHeader('Content-Type', 'text/event-stream');
   response.setHeader('Cache-Control', 'no-cache');
   response.setHeader('Connection', 'keep-alive');

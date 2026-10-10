@@ -5175,20 +5175,6 @@ function UserDashboard({
   const fundingAccountDigits = `${user.id}${user.phone}`.replace(/\D/g, '').slice(-10).padStart(10, '0');
   const fundingReference = `PNC-${user.id.replace(/\D/g, '').slice(-4).padStart(4, '0')}-${firstName.toUpperCase()}`;
   const cleanedTransferAccountNumber = transferForm.accountNumber.replace(/\D/g, '');
-  const matchedPncRecipient = useMemo(() => {
-    if (cleanedTransferAccountNumber.length !== 10) {
-      return null;
-    }
-
-    return (
-      accounts.find(
-        (account) =>
-          account.role !== 'admin'
-          && account.id !== user.id
-          && String(account.accountNumber ?? '').replace(/\D/g, '') === cleanedTransferAccountNumber,
-      ) ?? null
-    );
-  }, [accounts, cleanedTransferAccountNumber, user.id]);
   const isOwnTransferAccountNumber =
     cleanedTransferAccountNumber.length === 10
     && String(user.accountNumber ?? '').replace(/\D/g, '') === cleanedTransferAccountNumber;
@@ -6106,9 +6092,8 @@ function UserDashboard({
             <label className="mobile-inline-field">
               <span>Account number</span>
               <input value={transferForm.accountNumber} placeholder="Enter 10-digit registered PNC account number" onChange={(event) => setTransferForm((current) => ({ ...current, accountNumber: event.target.value }))} />
-              {matchedPncRecipient ? <small className="transfer-recipient-hint">PNC recipient: {matchedPncRecipient.name}</small> : null}
-              {!matchedPncRecipient && isOwnTransferAccountNumber ? <small className="transfer-recipient-hint">This is your own PNC account number.</small> : null}
-              {!matchedPncRecipient && !isOwnTransferAccountNumber && cleanedTransferAccountNumber.length === 10 ? <small className="transfer-recipient-hint">No registered PNC recipient found for this account number.</small> : null}
+              {isOwnTransferAccountNumber ? <small className="transfer-recipient-hint">This is your own PNC account number.</small> : null}
+              {!isOwnTransferAccountNumber && cleanedTransferAccountNumber.length === 10 ? <small className="transfer-recipient-hint">The recipient will be verified securely when you submit.</small> : null}
             </label>
             <label className="mobile-inline-field">
               <span>Amount</span>
