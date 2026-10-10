@@ -1371,6 +1371,25 @@ async function requestLogout() {
   await fetch(getAuthApiUrl('logout'), { method: 'POST', credentials: 'include' }).catch(() => null);
 }
 
+async function fetchOwnership() {
+  const response = await fetch(`${getSharedApiBaseUrl()}/api/admin/ownership`, { credentials: 'include' });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to load platform ownership right now.');
+  return payload;
+}
+
+async function requestOwnershipAction(action, details) {
+  const response = await fetch(`${getSharedApiBaseUrl()}/api/admin/ownership/${action}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(details),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? `Unable to ${action} platform ownership right now.`);
+  return payload;
+}
+
 async function requestInternalTransfer(transfer, idempotencyKey) {
   const response = await fetch(getInternalTransferApiUrl(), {
     method: 'POST',
@@ -1535,10 +1554,13 @@ async function fetchRemoteAdminWorkspace() {
   }
 
   const payload = await response.json();
-  return payload.workspace && typeof payload.workspace === 'object' ? payload.workspace : {};
+  return {
+    workspace: payload.workspace && typeof payload.workspace === 'object' ? payload.workspace : {},
+    updatedAt: payload.updatedAt ?? null,
+  };
 }
 
-async function saveRemoteAdminWorkspace(workspace) {
+async function saveRemoteAdminWorkspace(workspace, expectedUpdatedAt) {
   const { adminUserRecords: _adminUserRecords, adminWithdrawalRecords: _adminWithdrawalRecords, ...safeWorkspace } = workspace;
   const response = await fetch(getSharedAdminWorkspaceApiUrl(), {
     method: 'PUT',
@@ -1546,11 +1568,12 @@ async function saveRemoteAdminWorkspace(workspace) {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ workspace: safeWorkspace }),
+    body: JSON.stringify({ workspace: safeWorkspace, expectedUpdatedAt }),
   });
 
   if (!response.ok) {
-    throw new Error('Failed to save shared admin workspace.');
+    const payload = await readApiPayload(response);
+    throw new Error(payload.message ?? 'Failed to save shared admin workspace.');
   }
 
   return response.json();
@@ -1998,6 +2021,10 @@ function App() {
   const [adminTransactionRecords, setAdminTransactionRecords] = useState(persistedAdminWorkspace.adminTransactionRecords);
   const [adminCaseRecords, setAdminCaseRecords] = useState(persistedAdminWorkspace.adminCaseRecords);
   const [adminSettings, setAdminSettings] = useState(persistedAdminWorkspace.adminSettings);
+  const [ownershipState, setOwnershipState] = useState({ ownerUserId: null, ownerName: null, ownerEmail: null, version: 0, updatedAt: '' });
+  const [ownershipCandidates, setOwnershipCandidates] = useState([]);
+  const [ownershipForm, setOwnershipForm] = useState({ targetUserId: '', password: '', confirmation: '' });
+  const [ownershipFeedback, setOwnershipFeedback] = useState('');
   const [adminExportHistory, setAdminExportHistory] = useState(persistedAdminWorkspace.adminExportHistory);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [adminDialog, setAdminDialog] = useState({
@@ -2035,6 +2062,7 @@ function App() {
   const latestAccountsRef = useRef(accounts);
   const lastRemoteAccountsSnapshotRef = useRef('');
   const lastRemoteAdminWorkspaceSnapshotRef = useRef('');
+  const adminWorkspaceVersionRef = useRef(null);
   const loadingRequestRef = useRef(0);
   const withdrawalFailureTimersRef = useRef(new Map());
 
@@ -2261,7 +2289,8 @@ function App() {
 
     async function loadSharedAdminWorkspace() {
       try {
-        const remoteWorkspace = normalizeAdminWorkspaceState(await fetchRemoteAdminWorkspace());
+        const remotePayload = await fetchRemoteAdminWorkspace();
+        const remoteWorkspace = normalizeAdminWorkspaceState(remotePayload.workspace);
         const remoteSnapshot = JSON.stringify(remoteWorkspace);
 
         if (cancelled) {
@@ -2269,6 +2298,7 @@ function App() {
         }
 
         lastRemoteAdminWorkspaceSnapshotRef.current = remoteSnapshot;
+        adminWorkspaceVersionRef.current = remotePayload.updatedAt;
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
@@ -2296,6 +2326,27 @@ function App() {
       cancelled = true;
     };
   }, [activeUser?.role, serverAuthenticated]);
+
+  useEffect(() => {
+    if (!serverAuthenticated || activeUser?.role !== 'admin') return;
+    let cancelled = false;
+    fetchOwnership()
+      .then((payload) => {
+        if (cancelled) return;
+        setOwnershipState(payload.ownership);
+        setOwnershipCandidates(payload.candidates);
+        setOwnershipForm((current) => ({
+          ...current,
+          targetUserId: current.targetUserId || payload.candidates.find((candidate) => candidate.id !== activeUser.id)?.id || '',
+        }));
+      })
+      .catch((error) => {
+        if (!cancelled) setOwnershipFeedback(error instanceof Error ? error.message : 'Unable to load platform ownership right now.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUser?.id, activeUser?.role, serverAuthenticated]);
 
   useEffect(() => {
     if (!remoteAccountsReady || !serverAuthenticated) {
@@ -2486,12 +2537,14 @@ function App() {
 
     async function pushSharedAdminWorkspace() {
       try {
-        await saveRemoteAdminWorkspace(adminWorkspaceSnapshot);
+        const result = await saveRemoteAdminWorkspace(adminWorkspaceSnapshot, adminWorkspaceVersionRef.current);
 
         if (!cancelled) {
           lastRemoteAdminWorkspaceSnapshotRef.current = snapshot;
+          adminWorkspaceVersionRef.current = result.updatedAt;
         }
-      } catch {
+      } catch (error) {
+        if (!cancelled) setAdminNotice(error instanceof Error ? error.message : 'The admin workspace changed. Refresh and try again.');
         return;
       }
     }
@@ -2510,7 +2563,8 @@ function App() {
 
     const intervalId = window.setInterval(async () => {
       try {
-        const remoteWorkspace = normalizeAdminWorkspaceState(await fetchRemoteAdminWorkspace());
+        const remotePayload = await fetchRemoteAdminWorkspace();
+        const remoteWorkspace = normalizeAdminWorkspaceState(remotePayload.workspace);
         const remoteSnapshot = JSON.stringify(remoteWorkspace);
 
         if (remoteSnapshot === lastRemoteAdminWorkspaceSnapshotRef.current) {
@@ -2518,6 +2572,7 @@ function App() {
         }
 
         lastRemoteAdminWorkspaceSnapshotRef.current = remoteSnapshot;
+        adminWorkspaceVersionRef.current = remotePayload.updatedAt;
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, accounts));
@@ -2561,10 +2616,12 @@ function App() {
 
     async function refreshAdminWorkspace() {
       try {
-        const remoteWorkspace = normalizeAdminWorkspaceState(await fetchRemoteAdminWorkspace());
+        const remotePayload = await fetchRemoteAdminWorkspace();
+        const remoteWorkspace = normalizeAdminWorkspaceState(remotePayload.workspace);
         const remoteSnapshot = JSON.stringify(remoteWorkspace);
 
         lastRemoteAdminWorkspaceSnapshotRef.current = remoteSnapshot;
+        adminWorkspaceVersionRef.current = remotePayload.updatedAt;
         setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
@@ -4316,6 +4373,30 @@ function App() {
     });
   }
 
+  async function handleOwnershipSubmit() {
+    if (!activeUser || activeUser.role !== 'admin') return;
+    const action = ownershipState.ownerUserId ? 'transfer' : 'claim';
+    setOwnershipFeedback('');
+    try {
+      const payload = await requestOwnershipAction(action, {
+        targetUserId: ownershipForm.targetUserId,
+        password: ownershipForm.password,
+        confirmation: ownershipForm.confirmation,
+        expectedVersion: ownershipState.version,
+      });
+      setOwnershipState(payload.ownership);
+      setOwnershipForm((current) => ({ ...current, password: '', confirmation: '' }));
+      setOwnershipFeedback(action === 'claim' ? 'Platform ownership claimed.' : 'Platform ownership transferred.');
+    } catch (error) {
+      setOwnershipFeedback(error instanceof Error ? error.message : 'Unable to update platform ownership right now.');
+      const latest = await fetchOwnership().catch(() => null);
+      if (latest) {
+        setOwnershipState(latest.ownership);
+        setOwnershipCandidates(latest.candidates);
+      }
+    }
+  }
+
   function confirmAdminDialog() {
     if (!adminDialog.open) {
       return;
@@ -4542,6 +4623,13 @@ function App() {
         onOpenCaseReviewDialog={openCaseReviewDialog}
         adminSettings={adminSettings}
         onSettingToggle={handleSettingToggle}
+        activeAdminId={activeUser.id}
+        ownershipState={ownershipState}
+        ownershipCandidates={ownershipCandidates}
+        ownershipForm={ownershipForm}
+        onOwnershipFormChange={(field, value) => setOwnershipForm((current) => ({ ...current, [field]: value }))}
+        onOwnershipSubmit={handleOwnershipSubmit}
+        ownershipFeedback={ownershipFeedback}
         adminExportHistory={adminExportHistory}
         adminDialog={adminDialog}
         onCloseDialog={closeAdminDialog}
@@ -7401,6 +7489,13 @@ function AdminDashboard({
   onOpenCaseReviewDialog,
   adminSettings,
   onSettingToggle,
+  activeAdminId,
+  ownershipState,
+  ownershipCandidates,
+  ownershipForm,
+  onOwnershipFormChange,
+  onOwnershipSubmit,
+  ownershipFeedback,
   adminExportHistory,
   adminDialog,
   onCloseDialog,
@@ -9071,6 +9166,54 @@ function AdminDashboard({
               </div>
             ))}
           </div>
+        </article>
+
+        <article className="glass-card settings-card admin-page-card">
+          <div className="section-head compact">
+            <div>
+              <p className="eyebrow">Platform Ownership</p>
+              <h3>{ownershipState.ownerName ?? 'Ownership not assigned'}</h3>
+            </div>
+            <span className="chip">Version {ownershipState.version}</span>
+          </div>
+          <div className="detail-list compact-list">
+            <div className="detail-row">
+              <span>Recorded owner</span>
+              <strong>{ownershipState.ownerEmail ?? 'Unclaimed'}</strong>
+            </div>
+          </div>
+          {!ownershipState.ownerUserId || ownershipState.ownerUserId === activeAdminId ? (
+            <div className="admin-form-grid">
+              {ownershipState.ownerUserId ? (
+                <label className="input-shell admin-form-field">
+                  <span>New owner</span>
+                  <select value={ownershipForm.targetUserId} onChange={(event) => onOwnershipFormChange('targetUserId', event.target.value)}>
+                    <option value="">Select an active administrator</option>
+                    {ownershipCandidates.filter((candidate) => candidate.id !== activeAdminId).map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.name} ({candidate.email})</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <label className="input-shell admin-form-field">
+                <span>Current password</span>
+                <input type="password" autoComplete="current-password" value={ownershipForm.password} onChange={(event) => onOwnershipFormChange('password', event.target.value)} />
+              </label>
+              <label className="input-shell admin-form-field">
+                <span>Exact confirmation</span>
+                <input value={ownershipForm.confirmation} onChange={(event) => onOwnershipFormChange('confirmation', event.target.value)} />
+                <small>{ownershipState.ownerUserId
+                  ? `TRANSFER OWNERSHIP TO ${ownershipCandidates.find((candidate) => candidate.id === ownershipForm.targetUserId)?.email ?? '[administrator email]'}`
+                  : 'CLAIM PLATFORM OWNERSHIP'}</small>
+              </label>
+              <button type="button" className="primary-button" onClick={onOwnershipSubmit}>
+                {ownershipState.ownerUserId ? 'Transfer ownership' : 'Claim ownership'}
+              </button>
+              {ownershipFeedback ? <p className="form-feedback">{ownershipFeedback}</p> : null}
+            </div>
+          ) : (
+            <p className="form-feedback">Only the recorded owner can transfer platform ownership.</p>
+          )}
         </article>
 
         <article className="glass-card notifications-card admin-page-card">

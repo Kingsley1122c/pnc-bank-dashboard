@@ -445,13 +445,27 @@ export function createDatabaseAccount(db, account) {
 }
 
 export function readDatabaseAdminWorkspace(db) {
-  const row = db.prepare('SELECT workspace_json FROM admin_workspace_state WHERE singleton_id = 1').get();
-  return row ? JSON.parse(row.workspace_json) : {};
+  const row = db.prepare('SELECT workspace_json, updated_at FROM admin_workspace_state WHERE singleton_id = 1').get();
+  return row ? { workspace: JSON.parse(row.workspace_json), updatedAt: row.updated_at } : { workspace: {}, updatedAt: null };
 }
 
-export function saveDatabaseAdminWorkspace(db, workspace) {
-  db.prepare(`
-    INSERT INTO admin_workspace_state (singleton_id, workspace_json, updated_at) VALUES (1, ?, ?)
-    ON CONFLICT(singleton_id) DO UPDATE SET workspace_json = excluded.workspace_json, updated_at = excluded.updated_at
-  `).run(JSON.stringify(workspace), isoNow());
+export function saveDatabaseAdminWorkspace(db, workspace, expectedUpdatedAt) {
+  const expected = String(expectedUpdatedAt ?? '').trim();
+  if (!expected) {
+    const error = new Error('The workspace version is required. Refresh and try again.');
+    error.code = 'WORKSPACE_VERSION_REQUIRED';
+    throw error;
+  }
+  const now = isoNow();
+  const updatedAt = now > expected ? now : new Date(Date.parse(expected) + 1).toISOString();
+  const result = db.prepare(`
+    UPDATE admin_workspace_state SET workspace_json = ?, updated_at = ?
+    WHERE singleton_id = 1 AND updated_at = ?
+  `).run(JSON.stringify(workspace), updatedAt, expected);
+  if (result.changes !== 1) {
+    const error = new Error('The admin workspace changed. Refresh and try again.');
+    error.code = 'WORKSPACE_CONFLICT';
+    throw error;
+  }
+  return updatedAt;
 }

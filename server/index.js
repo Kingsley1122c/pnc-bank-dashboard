@@ -18,6 +18,7 @@ import {
   updateDatabaseAccountPassword,
 } from './database.js';
 import { escapeHtml, hashPassword, isValidEmail, isValidEmailHeader, normalizeEmail, sanitizeAccount } from './security.js';
+import { claimOwnership, getOwnership, listOwnershipCandidates, OwnershipError, transferOwnership } from './ownership.js';
 import { createAdminAdjustment, createInternalTransfer, TransactionError } from './transactions.js';
 import {
   createWithdrawalRequest,
@@ -521,8 +522,8 @@ async function readAdminWorkspace() {
   return readDatabaseAdminWorkspace(database);
 }
 
-async function saveAdminWorkspace(workspace) {
-  saveDatabaseAdminWorkspace(database, workspace);
+async function saveAdminWorkspace(workspace, expectedUpdatedAt) {
+  return saveDatabaseAdminWorkspace(database, workspace, expectedUpdatedAt);
 }
 
 if (process.env.NODE_ENV !== 'production') await ensureAccountsFile();
@@ -721,8 +722,8 @@ app.put('/api/accounts', authService.requireAuth, async (request, response) => {
 });
 
 app.get('/api/admin-workspace', authService.requireAuth, authService.requireRole('admin'), async (_request, response) => {
-  const workspace = await readAdminWorkspace();
-  response.json({ workspace, updatedAt: new Date().toISOString() });
+  const result = await readAdminWorkspace();
+  response.json(result);
 });
 
 app.put('/api/admin-workspace', authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
@@ -738,9 +739,21 @@ app.put('/api/admin-workspace', authService.requireAuth, authService.requireRole
     return;
   }
 
-  await saveAdminWorkspace(workspace);
-  broadcastEvent('admin-workspace');
-  response.json({ ok: true, updatedAt: new Date().toISOString() });
+  try {
+    const updatedAt = await saveAdminWorkspace(workspace, request.body?.expectedUpdatedAt);
+    broadcastEvent('admin-workspace');
+    response.json({ ok: true, updatedAt });
+  } catch (error) {
+    if (error?.code === 'WORKSPACE_VERSION_REQUIRED') {
+      response.status(400).json({ code: error.code, message: error.message });
+      return;
+    }
+    if (error?.code === 'WORKSPACE_CONFLICT') {
+      response.status(409).json({ code: error.code, message: error.message });
+      return;
+    }
+    throw error;
+  }
 });
 
 app.post('/api/transfers/internal', authService.requireAuth, async (request, response) => {
@@ -819,6 +832,47 @@ app.post('/api/admin/accounts/:userId/verify', authService.requireAuth, authServ
       return;
     }
     response.status(500).json({ message: 'Unable to verify the account right now.' });
+  }
+});
+
+app.get('/api/admin/ownership', authService.requireAuth, authService.requireRole('admin'), (_request, response) => {
+  response.json({ ownership: getOwnership(database), candidates: listOwnershipCandidates(database) });
+});
+
+app.post('/api/admin/ownership/claim', authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
+  try {
+    const ownership = await claimOwnership(database, {
+      actorUserId: request.auth.account.id,
+      password: request.body?.password,
+      confirmation: request.body?.confirmation,
+      expectedVersion: request.body?.expectedVersion,
+    });
+    response.json({ ownership });
+  } catch (error) {
+    if (error instanceof OwnershipError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to claim platform ownership right now.' });
+  }
+});
+
+app.post('/api/admin/ownership/transfer', authService.requireAuth, authService.requireRole('admin'), async (request, response) => {
+  try {
+    const ownership = await transferOwnership(database, {
+      actorUserId: request.auth.account.id,
+      targetUserId: request.body?.targetUserId,
+      password: request.body?.password,
+      confirmation: request.body?.confirmation,
+      expectedVersion: request.body?.expectedVersion,
+    });
+    response.json({ ownership });
+  } catch (error) {
+    if (error instanceof OwnershipError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to transfer platform ownership right now.' });
   }
 });
 

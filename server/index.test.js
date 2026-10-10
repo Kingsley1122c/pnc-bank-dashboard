@@ -62,6 +62,8 @@ test('account API requires a session and never returns password material', async
 
   const userWorkspaceResponse = await fetch(`${baseUrl}/api/admin-workspace`, { headers: { Cookie: sessionCookie } });
   assert.equal(userWorkspaceResponse.status, 403);
+  const userOwnershipResponse = await fetch(`${baseUrl}/api/admin/ownership`, { headers: { Cookie: sessionCookie } });
+  assert.equal(userOwnershipResponse.status, 403);
   const injectedEmailResponse = await fetch(`${baseUrl}/api/emails/important-message`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json' },
@@ -131,6 +133,18 @@ test('account API requires a session and never returns password material', async
   });
   assert.equal(adminLoginResponse.status, 200);
   const adminCookie = adminLoginResponse.headers.get('set-cookie')?.split(';')[0];
+  const ownershipResponse = await fetch(`${baseUrl}/api/admin/ownership`, { headers: { Cookie: adminCookie } });
+  assert.equal(ownershipResponse.status, 200);
+  const ownershipState = await ownershipResponse.json();
+  assert.equal(ownershipState.ownership.ownerUserId, null);
+  const claimResponse = await fetch(`${baseUrl}/api/admin/ownership/claim`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'admin123', confirmation: 'CLAIM PLATFORM OWNERSHIP', expectedVersion: ownershipState.ownership.version }),
+  });
+  assert.equal(claimResponse.status, 200);
+  const claimedOwnership = await claimResponse.json();
+  assert.equal(claimedOwnership.ownership.ownerUserId, 'ADM-0001');
   const forgedWorkspaceResponse = await fetch(`${baseUrl}/api/admin-workspace`, {
     method: 'PUT',
     headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },

@@ -6,7 +6,14 @@ import test from 'node:test';
 
 import Database from 'better-sqlite3';
 
-import { closeDatabase, getMigrationStatus, initializeDatabase, readDatabaseAccounts } from './database.js';
+import {
+  closeDatabase,
+  getMigrationStatus,
+  initializeDatabase,
+  readDatabaseAccounts,
+  readDatabaseAdminWorkspace,
+  saveDatabaseAdminWorkspace,
+} from './database.js';
 
 async function writeFixture(directory) {
   await writeFile(path.join(directory, 'accounts.json'), JSON.stringify([
@@ -99,4 +106,21 @@ test('migration retry repairs the empty schema created before shared legacy phon
   } finally {
     closeDatabase(db);
   }
+});
+
+test('admin workspace compare-and-swap rejects stale concurrent updates', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'pnc-db-'));
+  await writeFixture(directory);
+  const db = await initializeDatabase({ dataDir: directory });
+  try {
+    const firstReader = readDatabaseAdminWorkspace(db);
+    const secondReader = readDatabaseAdminWorkspace(db);
+    const updatedAt = saveDatabaseAdminWorkspace(db, { ...firstReader.workspace, adminNotice: 'First update' }, firstReader.updatedAt);
+    assert.notEqual(updatedAt, firstReader.updatedAt);
+    assert.throws(
+      () => saveDatabaseAdminWorkspace(db, { ...secondReader.workspace, adminNotice: 'Stale update' }, secondReader.updatedAt),
+      (error) => error.code === 'WORKSPACE_CONFLICT',
+    );
+    assert.equal(readDatabaseAdminWorkspace(db).workspace.adminNotice, 'First update');
+  } finally { closeDatabase(db); }
 });
