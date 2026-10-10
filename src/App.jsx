@@ -2851,7 +2851,7 @@ function App() {
         receipt: result.receipt,
         message: result.receipt.status === 'Pending Verification'
           ? `${displayedAmount} was sent to ${result.receipt.name}, but the funds are on hold until PNC verification is complete.`
-          : `${displayedAmount} sent to ${result.receipt.name} from ${transferForm.sourceAccount}.`,
+          : `${displayedAmount} sent to ${result.receipt.name} from your ${transferForm.sourceAccount} account.`,
       };
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : 'Unable to complete the transfer right now.' };

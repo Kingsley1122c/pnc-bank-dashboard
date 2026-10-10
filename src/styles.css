@@ -29,6 +29,7 @@ body,
 
 body {
   min-height: 100vh;
+  font-kerning: normal;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
