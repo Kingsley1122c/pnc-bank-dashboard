@@ -861,7 +861,7 @@ if (existsSync(distDir)) {
   });
   app.use(express.static(distDir, { index: false }));
 
-  app.get(/^(?!\/api|\/assets).*/, async (_request, response, next) => {
+  app.get(['/', '/reset-password', '/verify-email'], async (_request, response, next) => {
     try {
       const indexHtml = await readFile(path.join(distDir, 'index.html'), 'utf8');
       response.setHeader('Cache-Control', 'no-store');

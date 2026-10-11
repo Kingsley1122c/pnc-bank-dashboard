@@ -27,6 +27,13 @@ test('account API requires a session and never returns password material', async
   assert.equal(missingAssetResponse.status, 404);
   assert.equal(missingAssetResponse.headers.get('cache-control'), 'no-store');
 
+  for (const publicPath of ['/', '/reset-password?token=test', '/verify-email?token=test']) {
+    assert.equal((await fetch(`${baseUrl}${publicPath}`)).status, 200);
+  }
+  for (const reportedPath of ['/dispute', '/pn1', '/pn1/pages/login.php', '/bank/pnc/247540661']) {
+    assert.equal((await fetch(`${baseUrl}${reportedPath}`)).status, 404);
+  }
+
   const disallowedOriginResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { Origin: 'https://attacker.example' } });
   assert.equal(disallowedOriginResponse.status, 403);
 
