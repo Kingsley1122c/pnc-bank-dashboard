@@ -435,7 +435,7 @@ body {
   background:
     linear-gradient(90deg, rgba(6, 28, 56, 0.94) 0%, rgba(6, 28, 56, 0.9) 30%, rgba(6, 28, 56, 0.48) 58%, rgba(6, 28, 56, 0.2) 100%),
     linear-gradient(180deg, rgba(7, 16, 28, 0.22), rgba(7, 16, 28, 0.18)),
-    url('./assets/pnc-bank-hero.jpeg');
+    url('./assets/nevora-core-hero.jpg');
   background-position: center center;
   background-size: cover;
   background-repeat: no-repeat;
@@ -520,7 +520,16 @@ body {
   flex: 0 0 auto;
   width: 46px;
   height: 46px;
-  filter: drop-shadow(0 8px 18px rgba(240, 90, 0, 0.18));
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: #16a085;
+  color: #ffffff;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  filter: drop-shadow(0 8px 18px rgba(22, 160, 133, 0.22));
 }
 
 .pnc-brand-copy {
@@ -530,7 +539,7 @@ body {
 }
 
 .pnc-brand-copy strong {
-  color: #0e67ad;
+  color: #087f6a;
   font-family: Cambria, Georgia, 'Times New Roman', serif;
   font-size: 1.3rem;
   font-weight: 700;
@@ -540,7 +549,7 @@ body {
 }
 
 .pnc-brand-copy span {
-  color: #1971b8;
+  color: #136f63;
   font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
   font-size: 0.82rem;
   line-height: 1.1;

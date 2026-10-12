@@ -72,7 +72,7 @@ test('admin approval and customer code submission are atomic, audited, and prese
   try {
     const created = createWithdrawalRequest(db, { requesterId: 'USR-REQUESTER', bankId: 'BANK-OWN', amount: '25.50', idempotencyKey: 'withdrawal-lifecycle-0001' }).request;
     const approved = await decideWithdrawal(db, { adminId: 'ADM-OPERATOR', withdrawalId: created.id, decision: 'approve', expectedUpdatedAt: created.updatedAt });
-    assert.match(approved.approvalCode, /^PNC-\d{6}$/);
+    assert.match(approved.approvalCode, /^NVC-\d{6}$/);
     assert.equal(approved.request.status, 'Approved');
     assert.equal(db.prepare('SELECT approval_code_hash FROM withdrawal_requests WHERE id = ?').get(created.id).approval_code_hash.includes(approved.approvalCode), false);
 

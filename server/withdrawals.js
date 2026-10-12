@@ -189,7 +189,7 @@ export async function decideWithdrawal(db, { adminId, withdrawalId, decision, ex
   }
   const expectedVersion = requireExpectedUpdate(expectedUpdatedAt);
   const normalizedNote = String(note ?? '').trim().slice(0, 500);
-  const approvalCode = normalizedDecision === 'approve' ? `PNC-${randomInt(100000, 1000000)}` : null;
+  const approvalCode = normalizedDecision === 'approve' ? `NVC-${randomInt(100000, 1000000)}` : null;
   const approvalCodeHash = approvalCode ? await hashPassword(approvalCode) : null;
 
   const execute = db.transaction(() => {
@@ -244,7 +244,7 @@ export async function decideWithdrawal(db, { adminId, withdrawalId, decision, ex
 
 export async function submitWithdrawalCode(db, { requesterId, withdrawalId, code, expectedUpdatedAt, now = () => Date.now() }) {
   const normalizedCode = String(code ?? '').trim().toUpperCase();
-  if (!/^PNC-\d{6}$/.test(normalizedCode)) {
+  if (!/^(?:NVC|PNC)-\d{6}$/.test(normalizedCode)) {
     throw new WithdrawalError(400, 'INVALID_CODE', 'Enter a valid withdrawal code.');
   }
   const expectedVersion = requireExpectedUpdate(expectedUpdatedAt);

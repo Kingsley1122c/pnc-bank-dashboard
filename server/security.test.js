@@ -43,9 +43,9 @@ test('session tokens are random and stored by one-way hash', () => {
 });
 
 test('email and public URL validation accepts intended deployment values', () => {
-  assert.equal(isValidEmail('owner@pnc-core.com'), true);
+  assert.equal(isValidEmail('owner@nevoracore.com'), true);
   assert.equal(isValidEmail('invalid-address'), false);
-  assert.equal(isValidPublicUrl('https://pnc-core.com'), true);
+  assert.equal(isValidPublicUrl('https://nevoracore.com'), true);
   assert.equal(isValidPublicUrl('http://localhost:5173'), true);
   assert.equal(isValidPublicUrl('javascript:alert(1)'), false);
 });

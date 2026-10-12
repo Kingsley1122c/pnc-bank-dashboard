@@ -89,7 +89,7 @@ export function updateAccountStatus(db, { adminId, targetUserId, status, expecte
       idempotencyKey: `email:account-status:${targetUserId}:${updatedAt}`,
       eventType: 'account.status-changed', aggregateType: 'user', aggregateId: targetUserId,
       recipient: target.email, recipientUserId: targetUserId, templateId: 'account-status',
-      payload: { name: target.name, subject: `Your PNC account is ${normalizedStatus.toLowerCase()}`, message: `Your account status is now ${normalizedStatus}. Contact support if you need a review.`, occurredAt: updatedAt }, createdAt: updatedAt,
+      payload: { name: target.name, subject: `Your Nevora Core account is ${normalizedStatus.toLowerCase()}`, message: `Your account status is now ${normalizedStatus}. Contact support if you need a review.`, occurredAt: updatedAt }, createdAt: updatedAt,
     });
     audit(db, { adminId, action: 'account.status-changed', targetUserId, details: { previousStatus: target.status, status: normalizedStatus }, createdAt: updatedAt });
     return { account: accountResult(db, targetUserId) };
@@ -149,7 +149,7 @@ export function verifyAccount(db, { adminId, targetUserId, expectedUpdatedAt }) 
       recipient: target.email, recipientUserId: targetUserId, templateId: 'account-status',
       payload: {
         name: target.name,
-        subject: 'Your PNC account verification is complete',
+        subject: 'Your Nevora Core account verification is complete',
         message: holds.length > 0 ? `${holds.length} held incoming transfer(s) have now been released.` : 'Your account verification is complete.',
         occurredAt: updatedAt,
       },

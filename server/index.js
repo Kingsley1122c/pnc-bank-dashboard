@@ -107,7 +107,7 @@ function getSeedIssuedCards(account) {
       issuedAt: '2026-04-05T09:30:00.000Z',
       network: 'Mastercard World',
       maskedNumber: '**** 8842',
-      issuedBy: 'PNC Account Services',
+      issuedBy: 'Nevora Core Account Services',
     },
   ];
 }
@@ -129,8 +129,8 @@ function formatAccountNumber(accountNumber) {
   return `${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)} ${cleaned.slice(6)}`;
 }
 
-function generatePncAccountNumber(seed) {
-  const normalizedSeed = String(seed ?? 'PNC').trim().toUpperCase();
+function generateNevoraAccountNumber(seed) {
+  const normalizedSeed = String(seed ?? 'NEVORA').trim().toUpperCase();
   let hash = 0;
 
   for (const char of normalizedSeed) {
@@ -372,7 +372,7 @@ app.post('/api/auth/register', authRateLimit, async (request, response) => {
       const numericId = Number(String(account.id ?? '').replace(/^USR-/, ''));
       return Number.isFinite(numericId) ? Math.max(highest, numericId) : highest;
     }, 0) + 1;
-    const accountNumber = generatePncAccountNumber(`${normalizedEmailAddress}-${normalizedPhone}`);
+    const accountNumber = generateNevoraAccountNumber(`${normalizedEmailAddress}-${normalizedPhone}`);
     const newAccount = normalizeStoredAccount({
       id: `USR-${String(nextUserNumber).padStart(4, '0')}`,
       role: 'user',
@@ -393,7 +393,7 @@ app.post('/api/auth/register', authRateLimit, async (request, response) => {
         { label: 'Business', amount: 0 },
       ],
       accountNumber,
-      routingNumber: '031100089',
+      routingNumber: '',
       notifications: [],
       pendingIncomingTransfers: [],
       savedBanks: [],
@@ -875,7 +875,7 @@ if (existsSync(distDir)) {
 export async function startServer() {
   await ensureAccountsFile();
   const server = app.listen(port, host, () => {
-    console.log(`PNC app server running on http://${host}:${port}`);
+    console.log(`Nevora Core server running on http://${host}:${port}`);
   });
   const emailInterval = setInterval(() => void processEmailOutbox(), 30_000);
   emailInterval.unref();

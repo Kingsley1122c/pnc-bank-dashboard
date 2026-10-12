@@ -1,47 +1,40 @@
-# PNC Core Deployment
+# Nevora Core Deployment
 
 ## Render environment
 
-The production service is configured for one origin and one application base URL:
+After `nevoracore.com` is verified on the existing Render service, configure:
 
-- `APP_BASE_URL=https://pnc-core.com`
-- `ALLOWED_ORIGINS=https://pnc-core.com,https://www.pnc-core.com`
+- `APP_BASE_URL=https://nevoracore.com`
+- `ALLOWED_ORIGINS=https://nevoracore.com,https://www.nevoracore.com`
 - `VITE_API_BASE_URL` remains empty because the frontend and API are served by the same Render service.
 
 Keep `EMAIL_MODE=disabled` until the sender domain and controlled-recipient tests pass. Resend is the sole provider; store its API key and webhook secret only in Render's secret environment settings.
 
+Do not apply these runtime values before Render verifies the new hostnames and issues TLS. Keep the current Render subdomain available for rollback.
+
 ## Render custom domain
 
-1. Open the `pnc-bank-dashboard` web service in Render.
-2. Under **Settings > Custom Domains**, add the preferred hostname (`pnc-core.com` for an apex-primary setup or `www.pnc-core.com` for a www-primary setup). Render automatically adds the counterpart and redirects it to the hostname that was added.
+1. Open service `srv-d7elbh1j2pic738q646g` (`pnc-bank-dashboard`) in Render. The service name is a legacy infrastructure identifier and does not define the public brand.
+2. Under **Settings > Custom Domains**, add `nevoracore.com` as the preferred apex hostname. Confirm Render also prepares `www.nevoracore.com` as its counterpart before editing DNS.
 3. Copy the exact DNS type, host, and target shown by Render for each generated row. Do not use a target copied from another service or from an example.
 4. After DNS propagation, click **Verify** for the domain and wait for Render to report that TLS is active.
 5. Keep the working `pnc-bank-dashboard.onrender.com` subdomain enabled until both custom hostnames pass HTTPS and health checks.
 6. Do not enable production email links until Render reports the custom domain as verified and TLS is active.
 
-As observed on October 10, 2026, the workspace's two included custom-domain slots are used by `nivoracore.com` and `www.nivoracore.com` on the `nivora-core` service. Those domains must remain attached and operational. The approved PNC configuration adds `pnc-core.com` through this repository's Blueprint; Render automatically adds `www.pnc-core.com` as the redirect counterpart. Render's published overage price is `$0.25` per additional domain per month, so the approved maximum incremental cost for the PNC pair is `$0.50` per month. This does not require a workspace plan upgrade.
+`nivoracore.com` and `www.nivoracore.com` belong to the separate `nivora-core` project. Never edit, detach, redirect, or reuse either hostname during this migration. If Render presents a charge or plan change for the Nevora Core pair, stop and obtain approval before accepting it.
 
 ## Namecheap DNS
 
-In **Namecheap > Domain List > pnc-core.com > Advanced DNS**, create only the records displayed by Render. The required rows cannot be filled with verified values from this repository because Render assigns and displays the authoritative targets in its dashboard.
+In **Namecheap > Domain List > nevoracore.com > Advanced DNS**, create only the records displayed by Render for service `srv-d7elbh1j2pic738q646g`. Do not copy values from `pnc-core.com`, `nivoracore.com`, another Render service, or an example.
 
-The authoritative Namecheap nameservers returned the following website records on October 10, 2026 (TTL 1800):
+Record the provider-displayed values here before editing Namecheap:
 
-| Host | Type | Current value | Status |
-| --- | --- | --- | --- |
-| `@` | `A` | `162.255.119.159` | Conflicts with Render; points the apex away from the Render service |
-| `www` | `CNAME` | `parkingpage.namecheap.com` | Conflicts with Render; points `www` to Namecheap parking |
+| Purpose | Type | Host | Render target | TTL | Status |
+| --- | --- | --- | --- | --- | --- |
+| Apex domain | Pending Render instructions | `@` | Pending Render instructions | Pending | Not configured |
+| WWW domain | Pending Render instructions | `www` | Pending Render instructions | Pending | Not configured |
 
-Preserve unrelated MX and TXT records. Also check for and remove hostname-conflicting URL Redirect, ALIAS, and `AAAA` records only when updating that same hostname according to Render's displayed instructions. Render does not use IPv6 for custom-domain routing, so an `AAAA` record on `@` or `www` can prevent reliable routing.
-
-Applied Namecheap records:
-
-| Purpose | Type | Host | Value | TTL |
-| --- | --- | --- | --- | --- |
-| Apex domain | `A` | `@` | `216.24.57.1` | 1 minute |
-| `www` domain | `CNAME` | `www` | `pnc-bank-dashboard.onrender.com` | 1 minute |
-
-Both records were published by Namecheap and verified by Render on October 10, 2026. TLS certificate issuance must still show `issued` before the custom domain is considered production-ready.
+Preserve unrelated MX and TXT records. Remove or replace hostname-conflicting URL Redirect, ALIAS, A, CNAME, or AAAA records only for `nevoracore.com` when Render's displayed instructions require it.
 
 Safe update order:
 
@@ -51,7 +44,7 @@ Safe update order:
 4. Replace only the conflicting `www` parking/redirect record with Render's displayed `www` record.
 5. Leave mail-related MX/TXT records and any unrelated subdomains unchanged.
 6. Wait for both authoritative Namecheap nameservers and public resolvers to return the new values, then click **Verify** in Render.
-7. Confirm certificate issuance, HTTPS redirects, and `https://pnc-core.com/api/health` before changing any application URL or disabling the Render subdomain.
+7. Confirm certificate issuance, HTTPS redirects, and `https://nevoracore.com/api/health` before applying the new runtime URL or changing production traffic.
 
 DNS and TLS are considered complete only when Render shows both hostnames verified and HTTPS requests succeed.
 
@@ -69,7 +62,7 @@ Production delivery requires all of the following:
 
 ## Email rollout and operations
 
-Configure these values in Render: `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `EMAIL_MODE`, `EMAIL_TEST_RECIPIENT`, and `APP_BASE_URL`. Set the Resend webhook URL to `https://pnc-core.com/api/webhooks/resend` and subscribe to delivered, bounced, complained, and failed email events.
+Configure these values in Render: `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `EMAIL_MODE`, `EMAIL_TEST_RECIPIENT`, and `APP_BASE_URL`. Set the Resend webhook URL to `https://nevoracore.com/api/webhooks/resend` and subscribe to delivered, bounced, complained, and failed email events only after TLS is active.
 
 Use this rollout sequence:
 

@@ -5,15 +5,15 @@ const ACTIVE_USER_STORAGE_KEY = 'pnc-bank-active-user';
 const ADMIN_WORKSPACE_STORAGE_KEY = 'pnc-bank-admin-workspace';
 const DASHBOARD_MODE_STORAGE_KEY = 'pnc-bank-dashboard-mode';
 const LANGUAGE_STORAGE_KEY = 'pnc-bank-language';
-const CUSTOMER_SERVICE_EMAIL = 'pncbank.org@gmail.com';
+const CUSTOMER_SERVICE_EMAIL = String(import.meta.env.VITE_CUSTOMER_SERVICE_EMAIL ?? '').trim();
 const SHARED_ACCOUNTS_API_PORT = 8787;
-const PNC_ROUTING_NUMBER = '031100089';
 const NOTIFICATION_RETENTION_DAYS = 30;
 const WITHDRAWAL_CODE_REVIEW_FAIL_DELAY_MS = 5 * 60 * 1000;
 const PAGE_LOADING_DELAY_MS = 2000;
 const TRANSFER_LOADING_MIN_DELAY_MS = 3000;
 const TRANSFER_LOADING_MAX_DELAY_MS = 5000;
 const GOOGLE_TRANSLATE_SCRIPT_ID = 'pnc-google-translate-script';
+const EMPTY_ACCOUNT_LIST = Object.freeze([]);
 
 function getRandomDelay(minDelayMs, maxDelayMs) {
   return Math.floor(Math.random() * (maxDelayMs - minDelayMs + 1)) + minDelayMs;
@@ -153,14 +153,14 @@ const loadingScreenContent = {
   },
   'public-home': {
     eyebrow: 'Landing Page',
-    title: 'Opening PNC home',
-    message: 'Loading the main banking experience and feature highlights.',
+    title: 'Opening Nevora Core',
+    message: 'Loading the main financial workspace and feature highlights.',
     tone: 'blue',
   },
   'public-about': {
-    eyebrow: 'About PNC',
+    eyebrow: 'About Nevora Core',
     title: 'Loading the story page',
-    message: 'Preparing the PNC overview, trust message, and service highlights.',
+    message: 'Preparing the Nevora Core overview, trust message, and service highlights.',
     tone: 'gold',
   },
   'auth-login': {
@@ -417,11 +417,24 @@ function getTranslateComboElement() {
   return document.querySelector('.goog-te-combo');
 }
 
+function clearGoogleTranslateCookie() {
+  document.cookie = 'googtrans=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+  document.cookie = `googtrans=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.${window.location.hostname}`;
+}
+
 function applyGoogleTranslateLanguage(nextLanguage) {
   const combo = getTranslateComboElement();
 
   if (!combo) {
     return false;
+  }
+
+  if (nextLanguage === 'en') {
+    if (!combo.value) return true;
+
+    clearGoogleTranslateCookie();
+    window.location.reload();
+    return true;
   }
 
   if (combo.value === nextLanguage) {
@@ -490,7 +503,7 @@ function getLoadingIcon(flowKey = '') {
     return 'NEW';
   }
 
-  return 'PNC';
+  return 'NVC';
 }
 
 const seededAccounts = [
@@ -634,7 +647,7 @@ const withdrawalRequests = [
   {
     id: 'WD-2110',
     amount: '$2,500.00',
-    destination: 'PNC Platinum Checking',
+    destination: 'Nevora Core Current Account',
     requested: 'Apr 06, 2026',
     status: 'Pending',
     code: 'Awaiting approval',
@@ -645,7 +658,7 @@ const withdrawalRequests = [
     destination: 'External Bank Transfer',
     requested: 'Apr 04, 2026',
     status: 'Approved',
-    code: 'PNC-882194',
+    code: 'NVC-882194',
   },
   {
     id: 'WD-2098',
@@ -737,7 +750,7 @@ function getSeedIssuedCards(account) {
       issuedAt: '2026-04-05T09:30:00.000Z',
       network: seededProduct.network,
       maskedNumber: `**** ${seededProduct.number.replace(/\D/g, '').slice(-4)}`,
-      issuedBy: 'PNC Account Services',
+      issuedBy: 'Nevora Core Account Services',
     },
   ];
 }
@@ -770,7 +783,7 @@ const notificationItems = [
 ];
 
 const activityLogs = [
-  '09:40 - Super Admin approved withdrawal WD-2104 and issued code PNC-882194',
+  '09:40 - Super Admin approved withdrawal WD-2104 and issued code NVC-882194',
   '09:22 - Fraud engine auto-flagged Sophia Reed after threshold spike',
   '09:10 - Admin announcement drafted for scheduled maintenance window',
   '08:55 - Virtual card generated for request VC-287',
@@ -844,11 +857,11 @@ const landingFeatures = [
 ];
 
 const aboutUsMessage = [
-  'At PNC Bank, we are committed to delivering secure, reliable, and innovative financial solutions that empower individuals and businesses to thrive.',
-  'Founded on the principles of trust, transparency, and excellence, we provide a wide range of banking services including savings, transfers, virtual cards, and digital financial management - all designed to make banking simple and accessible.',
+  'At Nevora Core, we are committed to delivering secure, reliable, and clear financial operations tools for individuals and teams.',
+  'Founded on the principles of trust, transparency, and operational excellence, we provide account workspaces, transfers, virtual cards, and digital financial management tools in one accessible experience.',
   'Our mission is to combine stability with innovation. We leverage modern technology to ensure fast, secure transactions while maintaining the highest standards of customer protection.',
-  'We believe banking should be easy, safe, and always within reach. That\'s why we focus on user-friendly digital experiences, real-time support, and smart financial tools tailored to your needs.',
-  'At PNC Bank, your financial growth is our priority.',
+  'We believe financial operations should be easy, safe, and always within reach. That\'s why we focus on user-friendly digital experiences, real-time support, and practical tools tailored to your needs.',
+  'At Nevora Core, your financial clarity is our priority.',
 ];
 
 const publicPageContent = {
@@ -903,7 +916,7 @@ const publicPageContent = {
     ],
   },
   about: {
-    label: 'About PNC Bank',
+    label: 'About Nevora Core',
     title: 'Built on trust. Designed for growth.',
     description: aboutUsMessage[0],
     primaryAction: 'Back Home',
@@ -917,7 +930,7 @@ const publicPageContent = {
   },
   login: {
     label: 'Secure Sign In',
-    title: 'Access your dashboard with your PNC credentials.',
+    title: 'Access your dashboard with your Nevora Core credentials.',
     description: 'Sign in to manage balances, transfers, cards, verification updates, and customer support in one place.',
     primaryAction: 'Sign In',
     secondaryAction: 'Create Account',
@@ -925,9 +938,9 @@ const publicPageContent = {
   },
   register: {
     label: 'Open An Account',
-    title: 'Create your PNC profile and receive your account details instantly.',
+    title: 'Create your Nevora Core profile and receive your account details instantly.',
     description:
-      'Register to get a local PNC account number, start using your dashboard, and move into verification review for inbound transfers.',
+      'Register to get an internal Nevora Core account number, start using your dashboard, and move into verification review for internal transfers.',
     primaryAction: 'Create Account',
     secondaryAction: 'Log In',
     sideType: 'auth',
@@ -945,8 +958,8 @@ function formatCurrency(value) {
   }).format(value);
 }
 
-function generatePncAccountNumber(seed) {
-  const normalizedSeed = String(seed ?? 'PNC').trim().toUpperCase();
+function generateNevoraAccountNumber(seed) {
+  const normalizedSeed = String(seed ?? 'NEVORA').trim().toUpperCase();
   let hash = 0;
 
   for (const char of normalizedSeed) {
@@ -1011,7 +1024,7 @@ function getSupportEmailHref(emailAddress, message = '') {
   }
 
   const query = [
-    `subject=${encodeURIComponent('PNC Customer Support')}`,
+    `subject=${encodeURIComponent('Nevora Core Customer Support')}`,
     message ? `body=${encodeURIComponent(message)}` : '',
   ].filter(Boolean).join('&');
 
@@ -1020,7 +1033,7 @@ function getSupportEmailHref(emailAddress, message = '') {
 
 function buildConfirmationExportText({ eyebrow, title, message, auditLabel, createdAt, details = [], nextStep }) {
   const lines = [
-    'PNC BANK CONFIRMATION',
+    'NEVORA CORE CONFIRMATION',
     eyebrow ? `Type: ${eyebrow}` : null,
     title ? `Title: ${title}` : null,
     message ? `Message: ${message}` : null,
@@ -1149,7 +1162,7 @@ async function createReceiptImageBlob({ receipt, customerName }) {
 
   context.fillStyle = '#ffffff';
   context.font = '700 74px Georgia';
-  context.fillText('PNC BANK', cardX + 70, cardY + 108);
+  context.fillText('NEVORA CORE', cardX + 70, cardY + 108);
   context.font = '500 34px Segoe UI';
   context.fillText('Transfer Receipt', cardX + 70, cardY + 164);
   context.font = '500 28px Segoe UI';
@@ -1190,7 +1203,7 @@ async function createReceiptImageBlob({ receipt, customerName }) {
 
   context.fillStyle = '#35506c';
   context.font = '500 26px Segoe UI';
-  context.fillText(`Customer service email: ${CUSTOMER_SERVICE_EMAIL}`, cardX + 70, cardY + cardHeight - 120);
+  context.fillText(`Customer service email: ${CUSTOMER_SERVICE_EMAIL || 'Unavailable during rollout'}`, cardX + 70, cardY + cardHeight - 120);
   context.fillText('This receipt can be shared as proof of payment.', cardX + 70, cardY + cardHeight - 72);
 
   return new Promise((resolve) => {
@@ -1244,26 +1257,15 @@ function getInitials(name) {
     .toUpperCase();
 }
 
-function PncBrand({ className = '', showTagline = false }) {
+function NevoraBrand({ className = '', showTagline = false }) {
   const brandClassName = ['pnc-brand', className].filter(Boolean).join(' ');
 
   return (
-    <div className={brandClassName} aria-label="PNC Bank">
-      <svg
-        className="pnc-brand-symbol"
-        viewBox="0 0 96 96"
-        role="img"
-        aria-hidden="true"
-      >
-        <circle cx="48" cy="48" r="44" fill="#f58025" />
-        <path
-          fill="#ffffff"
-          d="M35.2 19.6c9 0 16.3 7.3 16.3 16.3v12.3h-8.8V36c0-4.1-3.3-7.5-7.5-7.5H26v-8.9h9.2Zm24.8 28.6c9 0 16.3 7.3 16.3 16.3v12.1h-8.9V64.5c0-4.1-3.3-7.5-7.4-7.5H47.8v-8.8H60Zm-34 0h8.8v12.3c0 4.1 3.3 7.5 7.5 7.5h9.2v8.9h-9.2c-9 0-16.3-7.3-16.3-16.3V48.2Z"
-        />
-      </svg>
+    <div className={brandClassName} aria-label="Nevora Core">
+      <span className="pnc-brand-symbol" aria-hidden="true">NC</span>
       <div className="pnc-brand-copy">
-        <strong>PNC BANK</strong>
-        {showTagline ? <span>for the achiever in you</span> : null}
+        <strong className="notranslate" translate="no">NEVORA CORE</strong>
+        {showTagline ? <span>clarity for every move</span> : null}
       </div>
     </div>
   );
@@ -1634,7 +1636,7 @@ function normalizeAccountDefaults(account) {
   const isAdminAccount = safeAccount.role === 'admin';
   const accountNumber = isAdminAccount
     ? safeAccount.accountNumber ?? ''
-    : safeAccount.accountNumber ?? generatePncAccountNumber(safeAccount.id || safeAccount.email || safeAccount.phone || safeAccount.name);
+    : safeAccount.accountNumber ?? generateNevoraAccountNumber(safeAccount.id || safeAccount.email || safeAccount.phone || safeAccount.name);
 
   return {
     ...safeAccount,
@@ -1645,7 +1647,7 @@ function normalizeAccountDefaults(account) {
     issuedCards: getSeedIssuedCards(safeAccount),
     pendingIncomingTransfers: safeAccount.pendingIncomingTransfers ?? [],
     accountNumber,
-    routingNumber: isAdminAccount ? account.routingNumber ?? '' : account.routingNumber ?? PNC_ROUTING_NUMBER,
+    routingNumber: account.routingNumber ?? '',
   };
 }
 
@@ -1827,7 +1829,7 @@ function mergeRemoteWithdrawalRecords(currentRecords, remoteRecords) {
   const currentById = new Map(currentRecords.map((record) => [record.id, record]));
   return remoteRecords.map((record) => {
     const current = currentById.get(record.id);
-    const inMemoryCode = /^PNC-\d{6}$/.test(String(current?.code ?? '')) && record.status === 'Approved'
+    const inMemoryCode = /^(?:NVC|PNC)-\d{6}$/.test(String(current?.code ?? '')) && record.status === 'Approved'
       ? current.code
       : record.code;
     return { ...record, code: inMemoryCode };
@@ -1972,15 +1974,18 @@ function App() {
   const [publicPage, setPublicPage] = useState(initialAuthAction || 'home');
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     const storedLanguage = readStorage(LANGUAGE_STORAGE_KEY) ?? 'en';
-    return languageOptions.some((entry) => entry.value === storedLanguage) ? storedLanguage : 'en';
+    const initialLanguage = languageOptions.some((entry) => entry.value === storedLanguage) ? storedLanguage : 'en';
+
+    if (initialLanguage === 'en' && typeof document !== 'undefined') clearGoogleTranslateCookie();
+    return initialLanguage;
   });
   const [translateReady, setTranslateReady] = useState(false);
   const [authMessage, setAuthMessage] = useState('');
   const [authForm, setAuthForm] = useState({
-    name: 'Example User',
-    identifier: 'example@pnc.bank',
-    phone: '+1 202 555 0146',
-    password: 'example123',
+    name: '',
+    identifier: '',
+    phone: '',
+    password: '',
     dateOfBirth: '',
     gender: '',
   });
@@ -2072,7 +2077,7 @@ function App() {
         : null,
     [accounts, selectedAdminRecord],
   );
-  const selectedAdminFundingAccounts = selectedAdminAccount?.accounts ?? [];
+  const selectedAdminFundingAccounts = selectedAdminAccount?.accounts ?? EMPTY_ACCOUNT_LIST;
   const filteredAdminUsers = useMemo(() => {
     const query = adminSearch.trim().toLowerCase();
 
@@ -2159,15 +2164,35 @@ function App() {
   }, [selectedLanguage]);
 
   useEffect(() => {
-    if (!translateReady || typeof window === 'undefined') {
+    const titleElement = document.querySelector('title');
+
+    if (!titleElement) return undefined;
+
+    const preserveBrandTitle = () => {
+      if (titleElement.textContent !== 'Nevora Core') titleElement.textContent = 'Nevora Core';
+    };
+    const observer = new MutationObserver(preserveBrandTitle);
+    observer.observe(titleElement, { childList: true, characterData: true, subtree: true });
+    preserveBrandTitle();
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      applyGoogleTranslateLanguage(selectedLanguage);
+    let attemptsRemaining = 20;
+    const intervalId = window.setInterval(() => {
+      attemptsRemaining -= 1;
+
+      if (applyGoogleTranslateLanguage(selectedLanguage) || attemptsRemaining === 0) {
+        window.clearInterval(intervalId);
+      }
     }, 250);
 
-    return () => window.clearTimeout(timeoutId);
+    return () => window.clearInterval(intervalId);
   }, [
     translateReady,
     selectedLanguage,
@@ -2886,7 +2911,7 @@ function App() {
       setAuthMode('login');
       setPublicPage('home');
       setAuthMessage(
-        `Account created successfully. Your PNC account number is ${formatAccountNumber(user.accountNumber)}. Verification by PNC is required before you can receive money from other users.${emailQueued ? ' A welcome email request was accepted by the configured provider.' : ' Welcome email delivery is not confirmed.'}`,
+        `Account created successfully. Your Nevora Core account number is ${formatAccountNumber(user.accountNumber)}. Verification by Nevora Core is required before you can receive money from other users.${emailQueued ? ' A welcome email request was accepted by the configured provider.' : ' Welcome email delivery is not confirmed.'}`,
       );
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : 'Unable to create the account right now.');
@@ -2935,8 +2960,8 @@ function App() {
     setPublicPage('home');
     setAuthForm((current) => ({
       ...current,
-      identifier: 'example@pnc.bank',
-      password: 'example123',
+      identifier: '',
+      password: '',
       dateOfBirth: '',
       gender: '',
     }));
@@ -2963,10 +2988,10 @@ function App() {
     setAuthMode('login');
     setPublicPage('home');
     setAuthForm({
-      name: 'Example User',
-      identifier: 'example@pnc.bank',
-      phone: '+1 202 555 0146',
-      password: 'example123',
+      name: '',
+      identifier: '',
+      phone: '',
+      password: '',
       dateOfBirth: '',
       gender: '',
     });
@@ -3083,7 +3108,7 @@ function App() {
         ok: true,
         receipt: result.receipt,
         message: result.receipt.status === 'Pending Verification'
-          ? `${displayedAmount} was sent to ${result.receipt.name}, but the funds are on hold until PNC verification is complete.`
+          ? `${displayedAmount} was sent to ${result.receipt.name}, but the funds are on hold until Nevora Core verification is complete.`
           : `${displayedAmount} sent to ${result.receipt.name} from your ${transferForm.sourceAccount} account.`,
       };
     } catch (error) {
@@ -3629,7 +3654,7 @@ function App() {
       const href = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = href;
-      link.download = 'pnc-admin-report.json';
+      link.download = 'nevora-core-admin-report.json';
       link.click();
       window.URL.revokeObjectURL(href);
     }
@@ -3850,7 +3875,7 @@ function App() {
         date: 'Just now',
         status: 'Completed',
         reviewStatus: 'Reviewed',
-        destination: `PNC Bank • ${receipt.accountLabel}`,
+        destination: `Nevora Core • ${receipt.accountLabel}`,
         note: receipt.note || 'Admin funding action',
       }, ...current]);
       setAdminUserRecords((current) => current.map((user) => user.accountId === receipt.accountId ? { ...user, lastActivity: 'Admin funding applied' } : user));
@@ -4469,7 +4494,7 @@ function App() {
 
       <header className="app-header glass-card">
         <div className="app-header-brand">
-          <PncBrand className="app-brand" />
+          <NevoraBrand className="app-brand" />
           <div>
             <p className="eyebrow">Operations Workspace</p>
             <h1>Premium Digital Banking Control Center</h1>
@@ -4643,7 +4668,7 @@ function AuthScreen({
   const pageContent = publicPageContent[publicPage] ?? publicPageContent.home;
   const generalCustomerServiceHref = getSupportEmailHref(
     CUSTOMER_SERVICE_EMAIL,
-    'Hello PNC customer service, I need help with my account.',
+    'Hello Nevora Core customer service, I need help with my account.',
   );
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -4948,7 +4973,7 @@ function AuthScreen({
         <div className="landing-grid" />
 
         <header className="landing-nav">
-          <PncBrand className="landing-logo" />
+          <NevoraBrand className="landing-logo" />
 
           <nav className="landing-links">
             {landingNav.map((item) => (
@@ -5040,9 +5065,11 @@ function AuthScreen({
                   <button type="button" className="landing-cta-secondary" onClick={() => openPublicPage('about')}>
                     Learn More <span>›</span>
                   </button>
-                  <a className="landing-cta-support" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
-                    Email Customer Service
-                  </a>
+                  {CUSTOMER_SERVICE_EMAIL ? (
+                    <a className="landing-cta-support" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
+                      Email Customer Service
+                    </a>
+                  ) : null}
                 </div>
               </>
             )}
@@ -5069,7 +5096,7 @@ function AuthScreen({
             </div>
           ) : publicPage !== 'home' ? (
             <div className="about-page-card glass-card">
-              <p className="eyebrow">Why PNC</p>
+              <p className="eyebrow">Why <span className="notranslate" translate="no">Nevora Core</span></p>
               <h3>{pageContent.label} with trusted digital infrastructure.</h3>
               <div className="about-page-highlights">
                 {pageContent.highlights.map((item) => (
@@ -5083,7 +5110,7 @@ function AuthScreen({
           ) : (
             <div className="landing-image-spacer" aria-hidden="true">
               <div className="landing-brand-badge">
-                <PncBrand className="pnc-brand-hero" showTagline />
+                <NevoraBrand className="pnc-brand-hero" showTagline />
               </div>
             </div>
           )}
@@ -5218,14 +5245,14 @@ function UserDashboard({
     { label: 'Pay Bills', icon: '◎', description: 'Utilities, subscriptions, and invoices.', page: 'Bill Pay' },
     { label: 'Loans', icon: '◈', description: 'View lending options and request help.', page: 'Loans' },
     { label: 'Investments', icon: '▲', description: 'Explore wealth and savings tools.', page: 'Investments' },
-    { label: 'Support', icon: '☎', description: 'Open a case or call the desk.', page: 'Support' },
+    { label: 'Support', icon: '☎', description: 'Open a case with the support desk.', page: 'Support' },
     { label: 'Security', icon: '⚙', description: 'Manage alerts and card access.', page: 'Security' },
     { label: 'Cards', icon: '▣', description: 'Review and request banking cards.', page: 'Cards' },
   ];
   const supportBackPage = ['Withdrawals', 'Add Money', 'Loans', 'Investments'].includes(lastMobileTab) ? lastMobileTab : 'Profile';
   const securityBackPage = ['Support', 'Add Money'].includes(lastMobileTab) ? lastMobileTab : 'Profile';
   const fundingAccountDigits = `${user.id}${user.phone}`.replace(/\D/g, '').slice(-10).padStart(10, '0');
-  const fundingReference = `PNC-${user.id.replace(/\D/g, '').slice(-4).padStart(4, '0')}-${firstName.toUpperCase()}`;
+  const fundingReference = `NVC-${user.id.replace(/\D/g, '').slice(-4).padStart(4, '0')}-${firstName.toUpperCase()}`;
   const cleanedTransferAccountNumber = transferForm.accountNumber.replace(/\D/g, '');
   const isOwnTransferAccountNumber =
     cleanedTransferAccountNumber.length === 10
@@ -5242,7 +5269,7 @@ function UserDashboard({
         })
       : '');
   const customerServiceHref = getSupportEmailHref(customerServiceEmail, supportRequestMessage);
-  const generalCustomerServiceHref = getSupportEmailHref(customerServiceEmail, 'Hello PNC customer service, I need help with my account.');
+  const generalCustomerServiceHref = getSupportEmailHref(customerServiceEmail, 'Hello Nevora Core customer service, I need help with my account.');
 
   function getActionResultExportLabel(result) {
     if (result.kind === 'withdrawal') {
@@ -5256,7 +5283,7 @@ function UserDashboard({
     const exportLabel = getActionResultExportLabel(result);
 
     return {
-      filename: `pnc-${slugifyReceiptSegment(result.kind)}-${slugifyReceiptSegment(result.details?.find((entry) => entry.label === 'Reference')?.value ?? user.id)}.txt`,
+      filename: `nevora-core-${slugifyReceiptSegment(result.kind)}-${slugifyReceiptSegment(result.details?.find((entry) => entry.label === 'Reference')?.value ?? user.id)}.txt`,
       content: buildConfirmationExportText({
         eyebrow: result.eyebrow ?? exportLabel,
         title: result.title,
@@ -5275,7 +5302,7 @@ function UserDashboard({
 
   function buildSelectedReceiptExportPayload(receipt) {
     return {
-      filename: `pnc-${slugifyReceiptSegment(receipt.type)}-${slugifyReceiptSegment(receipt.id)}.txt`,
+      filename: `nevora-core-${slugifyReceiptSegment(receipt.type)}-${slugifyReceiptSegment(receipt.id)}.txt`,
       content: buildConfirmationExportText({
         eyebrow: 'Receipt Copy',
         title: `${receipt.type} receipt`,
@@ -5334,7 +5361,7 @@ function UserDashboard({
       return;
     }
 
-    const filename = `pnc-${slugifyReceiptSegment(selectedReceipt.type)}-${slugifyReceiptSegment(selectedReceipt.id)}.png`;
+    const filename = `nevora-core-${slugifyReceiptSegment(selectedReceipt.type)}-${slugifyReceiptSegment(selectedReceipt.id)}.png`;
 
     try {
       const receiptFile = new File([receiptBlob], filename, { type: 'image/png' });
@@ -5342,7 +5369,7 @@ function UserDashboard({
       if (navigator?.share && navigator?.canShare?.({ files: [receiptFile] })) {
         await navigator.share({
           files: [receiptFile],
-          title: 'PNC receipt image',
+          title: 'Nevora Core receipt image',
           text: `Receipt ${selectedReceipt.id} for ${selectedReceipt.amount}`,
         });
         setActionUtilityFeedback('Receipt image shared successfully.');
@@ -5372,7 +5399,7 @@ function UserDashboard({
       return;
     }
 
-    const filename = `pnc-${slugifyReceiptSegment(selectedReceipt.type)}-${slugifyReceiptSegment(selectedReceipt.id)}.png`;
+    const filename = `nevora-core-${slugifyReceiptSegment(selectedReceipt.type)}-${slugifyReceiptSegment(selectedReceipt.id)}.png`;
     const downloaded = downloadBlobDocument(filename, receiptBlob);
     setActionUtilityFeedback(downloaded ? 'Receipt image downloaded successfully.' : 'Unable to download this receipt image from the current browser session.');
   }
@@ -5684,7 +5711,7 @@ function UserDashboard({
         ],
         nextStep:
           result.receipt.status === 'Pending Verification'
-            ? 'The transfer is recorded, but the recipient must complete PNC verification before the funds are released.'
+            ? 'The transfer is recorded, but the recipient must complete Nevora Core verification before the funds are released.'
             : 'Review the receipt below or return to payments to send another transfer.',
       });
       setSelectedReceipt(result.receipt);
@@ -5991,7 +6018,7 @@ function UserDashboard({
         {renderPageHeader({
           eyebrow: 'Accounts',
           title: 'View account numbers',
-          description: 'Share your PNC account number so other PNC users can send money to you directly.',
+          description: 'Share your Nevora Core account number so other registered users can send money to you directly.',
           backPage: 'Dashboard',
         })}
 
@@ -6001,12 +6028,12 @@ function UserDashboard({
             <strong>{user.name}</strong>
           </div>
           <div className="detail-row">
-            <span>PNC account number</span>
+            <span>Nevora Core account number</span>
             <strong>{formatAccountNumber(user.accountNumber)}</strong>
           </div>
           <div className="detail-row">
-            <span>Routing number</span>
-            <strong>{user.routingNumber || PNC_ROUTING_NUMBER}</strong>
+            <span>External routing</span>
+            <strong>{user.routingNumber || 'Not configured'}</strong>
           </div>
         </article>
 
@@ -6117,7 +6144,7 @@ function UserDashboard({
         {renderPageHeader({
           eyebrow: 'Transfers',
           title: 'Send money',
-          description: 'Create a PNC transfer and open receipts from the same workspace.',
+          description: 'Create a Nevora Core transfer and open receipts from the same workspace.',
           backPage: 'Dashboard',
         })}
 
@@ -6125,7 +6152,7 @@ function UserDashboard({
           <div className="mobile-section-head">
             <div>
               <p className="eyebrow">Transfer form</p>
-              <h3>Send to a registered PNC user</h3>
+              <h3>Send to a registered Nevora Core user</h3>
             </div>
             <button type="button" className="secondary-button compact-button" onClick={() => openPage('Bill Pay')}>
               Pay a bill
@@ -6135,16 +6162,16 @@ function UserDashboard({
           <div className="mobile-inline-form-grid">
             <label className="mobile-inline-field">
               <span>Recipient name</span>
-              <input value={transferForm.recipient} placeholder="Optional for PNC transfers" onChange={(event) => setTransferForm((current) => ({ ...current, recipient: event.target.value }))} />
+              <input value={transferForm.recipient} placeholder="Optional for internal transfers" onChange={(event) => setTransferForm((current) => ({ ...current, recipient: event.target.value }))} />
             </label>
             <label className="mobile-inline-field">
               <span>Bank name</span>
-              <input value={transferForm.bankName} placeholder="PNC-only transfer (optional field)" onChange={(event) => setTransferForm((current) => ({ ...current, bankName: event.target.value }))} />
+              <input value={transferForm.bankName} placeholder="Internal transfer (optional field)" onChange={(event) => setTransferForm((current) => ({ ...current, bankName: event.target.value }))} />
             </label>
             <label className="mobile-inline-field">
               <span>Account number</span>
-              <input value={transferForm.accountNumber} placeholder="Enter 10-digit registered PNC account number" onChange={(event) => setTransferForm((current) => ({ ...current, accountNumber: event.target.value }))} />
-              {isOwnTransferAccountNumber ? <small className="transfer-recipient-hint">This is your own PNC account number.</small> : null}
+              <input value={transferForm.accountNumber} placeholder="Enter a registered 10-digit Nevora Core account number" onChange={(event) => setTransferForm((current) => ({ ...current, accountNumber: event.target.value }))} />
+              {isOwnTransferAccountNumber ? <small className="transfer-recipient-hint">This is your own Nevora Core account number.</small> : null}
               {!isOwnTransferAccountNumber && cleanedTransferAccountNumber.length === 10 ? <small className="transfer-recipient-hint">The recipient will be verified securely when you submit.</small> : null}
             </label>
             <label className="mobile-inline-field">
@@ -6446,9 +6473,13 @@ function UserDashboard({
           ) : null}
 
           <div className="mobile-request-actions">
-            <a className="primary-button withdrawal-service-link" href={customerServiceHref} target="_blank" rel="noreferrer">
-              Email Customer Service {customerServiceEmail}
-            </a>
+            {customerServiceEmail ? (
+              <a className="primary-button withdrawal-service-link" href={customerServiceHref} target="_blank" rel="noreferrer">
+                Email Customer Service {customerServiceEmail}
+              </a>
+            ) : (
+              <span className="muted-copy">Email support is unavailable during rollout.</span>
+            )}
             <button type="button" className="secondary-button" onClick={() => openPage('Support')}>
               Open support page
             </button>
@@ -6542,7 +6573,7 @@ function UserDashboard({
               <>
                 <div className={`cards-showcase-face mobile-card-face ${activeCardProduct.themeClass}`}>
                   <div className="cards-showcase-top mobile-card-face-top">
-                    <div className="cards-bank-mark">PNC</div>
+                    <div className="cards-bank-mark">NC</div>
                     <div className="mobile-card-brand" aria-label="Mastercard debit">
                       <div className="mastercard-logo" aria-hidden="true">
                         <span className="mastercard-red" />
@@ -6588,7 +6619,7 @@ function UserDashboard({
               <>
                 <div className="cards-showcase-face cards-showcase-face-empty">
                   <div className="cards-showcase-top">
-                    <div className="cards-bank-mark">PNC</div>
+                    <div className="cards-bank-mark">NC</div>
                     {selectedCardRequest ? <span className={`status-pill ${selectedCardRequest.status.toLowerCase()}`}>{selectedCardRequest.status}</span> : null}
                   </div>
 
@@ -6680,9 +6711,11 @@ function UserDashboard({
               <p className="eyebrow">New case</p>
               <h3>Tell us what you need</h3>
             </div>
-            <a className="secondary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
-              Email Support
-            </a>
+            {customerServiceEmail ? (
+              <a className="secondary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
+                Email Support
+              </a>
+            ) : null}
           </div>
 
           <div className="mobile-inline-form-grid">
@@ -6877,10 +6910,16 @@ function UserDashboard({
             </div>
           </div>
 
-          <p className="muted-copy">Reach PNC customer service by email for account help and service questions.</p>
-          <a className="primary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
-            {customerServiceEmail}
-          </a>
+          <p className="muted-copy">
+            {customerServiceEmail
+              ? 'Reach Nevora Core customer service by email for account help and service questions.'
+              : 'Email support is unavailable during rollout.'}
+          </p>
+          {customerServiceEmail ? (
+            <a className="primary-button profile-link-button" href={generalCustomerServiceHref} target="_blank" rel="noreferrer">
+              {customerServiceEmail}
+            </a>
+          ) : null}
         </article>
       </section>
     );
@@ -7170,7 +7209,7 @@ function UserDashboard({
               <div className="receipt-image-preview">
                 <div className="receipt-image-preview-head">
                   <div>
-                    <p className="eyebrow">PNC Bank</p>
+                    <p className="eyebrow notranslate" translate="no">Nevora Core</p>
                     <h3>Receipt Image Preview</h3>
                   </div>
                   <span className={`status-pill ${String(receipt.status).toLowerCase().replace(/\s+/g, '-')}`}>{receipt.status}</span>
@@ -7362,7 +7401,7 @@ function UserDashboard({
             </button>
 
             <div className="mobile-header-copy">
-              <p className="eyebrow">PNC Bank</p>
+              <p className="eyebrow notranslate" translate="no">Nevora Core</p>
               <h2>Hi, {firstName}</h2>
             </div>
           </div>
@@ -7603,7 +7642,7 @@ function AdminDashboard({
     const reference = activeFundingReceipt?.transactionId ?? adminFundingResult?.transactionId ?? selectedAdminRecord?.accountId ?? 'funding';
 
     return {
-      filename: `pnc-admin-funding-${slugifyReceiptSegment(reference)}.txt`,
+      filename: `nevora-core-admin-funding-${slugifyReceiptSegment(reference)}.txt`,
       content: buildConfirmationExportText({
         eyebrow: 'Admin Funding',
         title: adminFundingResult?.title ?? 'Funding confirmation',

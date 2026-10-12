@@ -264,7 +264,7 @@ test('account API requires a session and never returns password material', async
   });
   assert.equal(approvalResponse.status, 200);
   const approval = await approvalResponse.json();
-  assert.match(approval.approvalCode, /^PNC-\d{6}$/);
+  assert.match(approval.approvalCode, /^NVC-\d{6}$/);
   const foreignCodeResponse = await fetch(`${baseUrl}/api/withdrawals/${withdrawal.request.id}/code`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },

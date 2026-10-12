@@ -48,7 +48,7 @@ function createReceipt(transaction, sender, recipient) {
     status: transaction.status,
     owner: sender.name,
     reviewStatus: transaction.status === 'Pending Verification' || transaction.amount_minor >= 500000 ? 'Pending Review' : 'Monitored',
-    destination: `PNC Bank • **** ${recipient.account_number.slice(-4)}`,
+    destination: `Nevora Core • **** ${recipient.account_number.slice(-4)}`,
     note: transaction.note ?? '',
   };
 }
@@ -79,7 +79,7 @@ export function createInternalTransfer(db, { senderId, sourceAccount, recipientA
   const normalizedRecipientNumber = String(recipientAccountNumber ?? '').replace(/\D/g, '');
   const normalizedNote = String(note ?? '').trim().slice(0, 500);
   if (!normalizedSource || normalizedRecipientNumber.length !== 10) {
-    throw new TransactionError(400, 'INVALID_TRANSFER', 'Choose a source account and enter a valid 10-digit PNC account number.');
+    throw new TransactionError(400, 'INVALID_TRANSFER', 'Choose a source account and enter a valid 10-digit Nevora Core account number.');
   }
   const amountMinor = parseAmountMinor(amount);
   const scopedIdempotencyKey = `transfer:${senderId}:${normalizedKey}`;
@@ -91,8 +91,8 @@ export function createInternalTransfer(db, { senderId, sourceAccount, recipientA
     const sender = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user' AND status != 'Suspended'").get(senderId);
     if (!sender) throw new TransactionError(403, 'SENDER_NOT_ELIGIBLE', 'This account cannot submit transfers.');
     const recipient = db.prepare("SELECT * FROM users WHERE account_number = ? AND role = 'user' AND status != 'Suspended'").get(normalizedRecipientNumber);
-    if (!recipient) throw new TransactionError(404, 'RECIPIENT_NOT_FOUND', 'Only active registered PNC account numbers are allowed.');
-    if (recipient.id === sender.id) throw new TransactionError(400, 'SELF_TRANSFER', 'Choose another PNC account as the recipient.');
+    if (!recipient) throw new TransactionError(404, 'RECIPIENT_NOT_FOUND', 'Only active registered Nevora Core account numbers are allowed.');
+    if (recipient.id === sender.id) throw new TransactionError(400, 'SELF_TRANSFER', 'Choose another Nevora Core account as the recipient.');
 
     const source = db.prepare('SELECT * FROM account_balances WHERE user_id = ? AND label = ? AND currency = ?').get(sender.id, normalizedSource, 'USD');
     if (!source) throw new TransactionError(400, 'SOURCE_NOT_FOUND', 'The selected source account is unavailable.');
@@ -138,7 +138,7 @@ export function createInternalTransfer(db, { senderId, sourceAccount, recipientA
 
     const recipientMessage = recipientVerified
       ? `${sender.name} sent you $${(amountMinor / 100).toFixed(2)}.`
-      : `${sender.name} sent you $${(amountMinor / 100).toFixed(2)}. The funds are on hold until your PNC verification is complete.`;
+      : `${sender.name} sent you $${(amountMinor / 100).toFixed(2)}. The funds are on hold until your Nevora Core verification is complete.`;
     db.prepare(`
       INSERT INTO notifications (id, user_id, event_type, title, message, idempotency_key, created_at, metadata_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)

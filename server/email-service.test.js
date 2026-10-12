@@ -26,12 +26,13 @@ function queueTransfer(db) {
 }
 
 test('email templates include authoritative details in HTML and plain text', () => {
-  const rendered = renderEmail('transfer-sent', { name: 'Email User', recipientName: 'Recipient', amount: '25.50', currency: 'USD', status: 'Completed', reference: 'TX-1', occurredAt: '2026-10-10T12:00:00.000Z' }, { appBaseUrl: 'https://pnc-core.com' });
+  const rendered = renderEmail('transfer-sent', { name: 'Email User', recipientName: 'Recipient', amount: '25.50', currency: 'USD', status: 'Completed', reference: 'TX-1', occurredAt: '2026-10-10T12:00:00.000Z' }, { appBaseUrl: 'https://nevoracore.com' });
   assert.match(rendered.subject, /completed/i);
   assert.match(rendered.text, /\$25\.50/);
   assert.match(rendered.text, /TX-1/);
-  assert.match(rendered.html, /PNC BANK/);
-  assert.match(rendered.html, /https:\/\/pnc-core\.com/);
+  assert.match(rendered.html, /NEVORA CORE/);
+  assert.match(rendered.html, /https:\/\/nevoracore\.com/);
+  assert.match(rendered.text, /financial operations platform/);
 });
 
 test('outbox accepts an email once and records provider acceptance separately from delivery', async () => {
@@ -42,7 +43,7 @@ test('outbox accepts an email once and records provider acceptance separately fr
     assert.equal(queueTransfer(db), false);
     const processor = createEmailProcessor({
       db,
-      env: { EMAIL_MODE: 'live', APP_BASE_URL: 'https://pnc-core.com' },
+      env: { EMAIL_MODE: 'live', APP_BASE_URL: 'https://nevoracore.com' },
       provider: { async send(message, idempotencyKey) { sent.push({ message, idempotencyKey }); return { id: 'resend-message-1' }; } },
       now: () => Date.parse('2026-10-10T12:01:00.000Z'),
     });

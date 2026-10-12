@@ -7,6 +7,7 @@ import { escapeHtml, isValidEmail, isValidEmailHeader, normalizeEmail } from './
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 60 * 60_000, 12 * 60 * 60_000];
 const FINAL_PROVIDER_STATUSES = new Set(['delivered', 'bounced', 'complained', 'failed', 'suppressed']);
+const SERVICE_DISCLOSURE = 'Nevora Core is a financial operations platform. Regulated banking services require separately disclosed licensed providers.';
 
 function asText(value, maxLength = 500) {
   return String(value ?? '').trim().slice(0, maxLength);
@@ -35,8 +36,8 @@ function brandLayout({ preheader, heading, name, paragraphs, details = [], actio
     ? `<p style="margin:28px 0"><a href="${escapeHtml(action.url)}" style="display:inline-block;background:#f58025;color:#fff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:6px">${escapeHtml(action.label)}</a></p>`
     : '';
   const support = supportEmail ? ` Contact us at ${supportEmail}.` : '';
-  const text = [heading, '', `Hello ${name || 'Customer'},`, '', ...paragraphs, '', ...details.map(([label, value]) => `${label}: ${value}`), action ? `Open: ${action.url}` : '', '', `For help, visit ${appBaseUrl}.${support}`, '', 'PNC Bank'].filter(Boolean).join('\n');
-  const html = `<!doctype html><html><body style="margin:0;background:#eef2f6;color:#102a43;font-family:Arial,sans-serif"><div style="display:none;max-height:0;overflow:hidden">${safePreheader}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border-radius:8px;overflow:hidden"><tr><td style="background:#003e69;padding:20px 28px;color:#fff"><span style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;border-radius:50%;background:#f58025;font-weight:800;margin-right:10px">PNC</span><strong style="font-size:20px;vertical-align:middle">PNC BANK</strong></td></tr><tr><td style="padding:30px 28px"><h1 style="font-size:26px;line-height:1.25;margin:0 0 18px">${safeHeading}</h1><p style="font-size:16px;line-height:1.6">Hello ${safeName},</p>${paragraphs.map((paragraph) => `<p style="font-size:16px;line-height:1.6">${escapeHtml(paragraph)}</p>`).join('')}${detailsHtml}${actionHtml}<p style="font-size:14px;line-height:1.6;color:#52606d">For help, visit <a href="${escapeHtml(appBaseUrl)}" style="color:#005ea8">${escapeHtml(appBaseUrl)}</a>.${escapeHtml(support)}</p></td></tr><tr><td style="background:#f4f7fa;padding:18px 28px;color:#627d98;font-size:12px;line-height:1.5">This service message was sent individually to protect customer privacy. Never reply with a password, verification code, or full account number.</td></tr></table></td></tr></table></body></html>`;
+  const text = [heading, '', `Hello ${name || 'Customer'},`, '', ...paragraphs, '', ...details.map(([label, value]) => `${label}: ${value}`), action ? `Open: ${action.url}` : '', '', `For help, visit ${appBaseUrl}.${support}`, '', SERVICE_DISCLOSURE, '', 'Nevora Core'].filter(Boolean).join('\n');
+  const html = `<!doctype html><html><body style="margin:0;background:#eef2f6;color:#102a43;font-family:Arial,sans-serif"><div style="display:none;max-height:0;overflow:hidden">${safePreheader}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border-radius:8px;overflow:hidden"><tr><td style="background:#073b4c;padding:20px 28px;color:#fff"><span style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;border-radius:6px;background:#16a085;font-weight:800;margin-right:10px">NC</span><strong style="font-size:20px;vertical-align:middle">NEVORA CORE</strong></td></tr><tr><td style="padding:30px 28px"><h1 style="font-size:26px;line-height:1.25;margin:0 0 18px">${safeHeading}</h1><p style="font-size:16px;line-height:1.6">Hello ${safeName},</p>${paragraphs.map((paragraph) => `<p style="font-size:16px;line-height:1.6">${escapeHtml(paragraph)}</p>`).join('')}${detailsHtml}${actionHtml}<p style="font-size:14px;line-height:1.6;color:#52606d">For help, visit <a href="${escapeHtml(appBaseUrl)}" style="color:#005ea8">${escapeHtml(appBaseUrl)}</a>.${escapeHtml(support)}</p></td></tr><tr><td style="background:#f4f7fa;padding:18px 28px;color:#627d98;font-size:12px;line-height:1.5"><strong>${escapeHtml(SERVICE_DISCLOSURE)}</strong><br><br>This service message was sent individually to protect customer privacy. Never reply with a password, verification code, or full account number.</td></tr></table></td></tr></table></body></html>`;
   return { text, html };
 }
 
@@ -52,31 +53,31 @@ export function renderEmail(templateId, payload, options = {}) {
 
   switch (templateId) {
     case 'welcome':
-      subject = 'Welcome to PNC Bank';
-      content = brandLayout({ preheader: 'Your PNC Bank account has been created.', heading: 'Your account is ready', name, paragraphs: ['Welcome to PNC Bank. Your account was created successfully.', 'Sign in to review your account details and complete any outstanding verification steps.'], details: [['Account', `Ending ${asText(payload.accountLast4, 4)}`], ['Status', 'Created']], action: { label: 'Open PNC Bank', url: appBaseUrl }, appBaseUrl, supportEmail });
+      subject = 'Welcome to Nevora Core';
+      content = brandLayout({ preheader: 'Your Nevora Core account has been created.', heading: 'Your account is ready', name, paragraphs: ['Welcome to Nevora Core. Your account was created successfully.', 'Sign in to review your account details and complete any outstanding verification steps.'], details: [['Account', `Ending ${asText(payload.accountLast4, 4)}`], ['Status', 'Created']], action: { label: 'Open Nevora Core', url: appBaseUrl }, appBaseUrl, supportEmail });
       break;
     case 'email-verification':
-      subject = 'Verify your PNC Bank email';
-      content = brandLayout({ preheader: 'Verify the email address for your PNC Bank profile.', heading: 'Verify your email', name, paragraphs: ['Use the secure link below to confirm this email address. The link expires in 24 hours.'], action: { label: 'Verify email', url: payload.actionUrl }, appBaseUrl, supportEmail });
+      subject = 'Verify your Nevora Core email';
+      content = brandLayout({ preheader: 'Verify the email address for your Nevora Core profile.', heading: 'Verify your email', name, paragraphs: ['Use the secure link below to confirm this email address. The link expires in 24 hours.'], action: { label: 'Verify email', url: payload.actionUrl }, appBaseUrl, supportEmail });
       break;
     case 'password-reset':
-      subject = 'Reset your PNC Bank password';
+      subject = 'Reset your Nevora Core password';
       content = brandLayout({ preheader: 'A password reset was requested.', heading: 'Reset your password', name, paragraphs: ['Use the secure link below to choose a new password. The link expires in 30 minutes.', 'If you did not request this, you can ignore this email.'], action: { label: 'Reset password', url: payload.actionUrl }, appBaseUrl, supportEmail });
       break;
     case 'password-changed':
-      subject = 'Your PNC Bank password was changed';
-      content = brandLayout({ preheader: 'Your password has been changed.', heading: 'Password changed', name, paragraphs: ['Your PNC Bank password was changed successfully.', 'If you did not make this change, contact support immediately.'], details: [['Date', occurredAt]], action: { label: 'Open PNC Bank', url: appBaseUrl }, appBaseUrl, supportEmail });
+      subject = 'Your Nevora Core password was changed';
+      content = brandLayout({ preheader: 'Your password has been changed.', heading: 'Password changed', name, paragraphs: ['Your Nevora Core password was changed successfully.', 'If you did not make this change, contact support immediately.'], details: [['Date', occurredAt]], action: { label: 'Open Nevora Core', url: appBaseUrl }, appBaseUrl, supportEmail });
       break;
     case 'transfer-sent':
-      subject = payload.status === 'Completed' ? 'PNC transfer completed' : 'PNC transfer submitted';
+      subject = payload.status === 'Completed' ? 'Nevora Core transfer completed' : 'Nevora Core transfer submitted';
       content = brandLayout({ preheader: `${amount} transfer update.`, heading: subject, name, paragraphs: [payload.status === 'Completed' ? `Your transfer to ${asText(payload.recipientName, 120)} completed.` : `Your transfer to ${asText(payload.recipientName, 120)} is pending recipient verification.`], details: [['Amount', amount], ['Reference', reference], ['Date', occurredAt], ['Status', asText(payload.status, 80)]], appBaseUrl, supportEmail });
       break;
     case 'transfer-received':
-      subject = payload.status === 'Completed' ? 'You received a PNC transfer' : 'Incoming transfer pending verification';
-      content = brandLayout({ preheader: `${amount} incoming transfer update.`, heading: subject, name, paragraphs: [payload.status === 'Completed' ? `${asText(payload.senderName, 120)} sent money to your PNC account.` : `${asText(payload.senderName, 120)} sent money that remains on hold until account verification is complete.`], details: [['Amount', amount], ['Reference', reference], ['Date', occurredAt], ['Status', asText(payload.status, 80)]], appBaseUrl, supportEmail });
+      subject = payload.status === 'Completed' ? 'You received a Nevora Core transfer' : 'Incoming transfer pending verification';
+      content = brandLayout({ preheader: `${amount} incoming transfer update.`, heading: subject, name, paragraphs: [payload.status === 'Completed' ? `${asText(payload.senderName, 120)} sent money to your Nevora Core account.` : `${asText(payload.senderName, 120)} sent money that remains on hold until account verification is complete.`], details: [['Amount', amount], ['Reference', reference], ['Date', occurredAt], ['Status', asText(payload.status, 80)]], appBaseUrl, supportEmail });
       break;
     case 'admin-credit':
-      subject = 'Deposit posted to your PNC account';
+      subject = 'Deposit posted to your Nevora Core account';
       content = brandLayout({ preheader: `${amount} was credited to your account.`, heading: 'Deposit completed', name, paragraphs: [`A deposit was posted to your ${asText(payload.accountLabel, 80)} account.`], details: [['Amount', amount], ['Reference', reference], ['Date', occurredAt], ['Status', 'Completed']], appBaseUrl, supportEmail });
       break;
     case 'withdrawal':
@@ -84,12 +85,12 @@ export function renderEmail(templateId, payload, options = {}) {
       content = brandLayout({ preheader: `${amount} withdrawal update.`, heading: subject, name, paragraphs: [asText(payload.message, 500)], details: [['Amount', amount], ['Reference', reference], ['Date', occurredAt], ['Status', asText(payload.status, 80)]], appBaseUrl, supportEmail });
       break;
     case 'account-status':
-      subject = asText(payload.subject, 160) || 'Important PNC Bank account update';
-      content = brandLayout({ preheader: subject, heading: subject, name, paragraphs: [asText(payload.message, 2000)], details: payload.reference ? [['Reference', reference], ['Date', occurredAt]] : [['Date', occurredAt]], action: { label: 'Open PNC Bank', url: appBaseUrl }, appBaseUrl, supportEmail });
+      subject = asText(payload.subject, 160) || 'Important Nevora Core account update';
+      content = brandLayout({ preheader: subject, heading: subject, name, paragraphs: [asText(payload.message, 2000)], details: payload.reference ? [['Reference', reference], ['Date', occurredAt]] : [['Date', occurredAt]], action: { label: 'Open Nevora Core', url: appBaseUrl }, appBaseUrl, supportEmail });
       break;
     case 'announcement':
       subject = asText(payload.subject, 160);
-      content = brandLayout({ preheader: subject, heading: subject, name, paragraphs: [asText(payload.message, 5000)], action: { label: 'Open PNC Bank', url: appBaseUrl }, appBaseUrl, supportEmail });
+      content = brandLayout({ preheader: subject, heading: subject, name, paragraphs: [asText(payload.message, 5000)], action: { label: 'Open Nevora Core', url: appBaseUrl }, appBaseUrl, supportEmail });
       break;
     default:
       throw new Error(`Unknown email template: ${templateId}`);
@@ -115,7 +116,7 @@ export function enqueueEmail(db, { idempotencyKey, eventType, aggregateType = nu
 export function createResendProvider(env = process.env) {
   const apiKey = env.RESEND_API_KEY?.trim();
   const fromEmail = env.EMAIL_FROM?.trim();
-  const fromName = env.EMAIL_FROM_NAME?.trim() || 'PNC Bank';
+  const fromName = env.EMAIL_FROM_NAME?.trim() || 'Nevora Core';
   if (!apiKey || !isValidEmail(fromEmail)) return null;
   const resend = new Resend(apiKey);
   return {
