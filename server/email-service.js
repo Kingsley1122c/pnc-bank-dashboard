@@ -75,7 +75,7 @@ function dateTime(value, locale = 'en-US') {
     : null;
 }
 
-function brandLayout({ preheader, heading, name, paragraphs, details = [], action = null, appBaseUrl, supportEmail, localeCode = 'en', words = EMAIL_LOCALES.en }) {
+function brandLayout({ preheader, heading, name, paragraphs, details = [], action = null, appBaseUrl, localeCode = 'en', words = EMAIL_LOCALES.en }) {
   const safePreheader = escapeHtml(preheader);
   const safeHeading = escapeHtml(heading);
   const safeName = escapeHtml(name || words.customer);
@@ -85,17 +85,15 @@ function brandLayout({ preheader, heading, name, paragraphs, details = [], actio
   const actionHtml = action
     ? `<p style="margin:28px 0"><a href="${escapeHtml(action.url)}" style="display:inline-block;background:#f58025;color:#fff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:6px">${escapeHtml(action.label)}</a></p>`
     : '';
-  const support = supportEmail ? ` ${supportEmail}` : '';
-  const text = [heading, '', `${words.hello} ${name || words.customer},`, '', ...paragraphs, '', ...details.map(([label, value]) => `${label}: ${value}`), action ? `${action.label}: ${action.url}` : '', '', `${words.help} ${appBaseUrl}.${support}`, '', words.disclosure, '', words.privacy, '', 'Nevora Core'].filter(Boolean).join('\n');
-  const html = `<!doctype html><html lang="${localeCode}"><body style="margin:0;background:#eef2f6;color:#102a43;font-family:Arial,sans-serif"><div style="display:none;max-height:0;overflow:hidden">${safePreheader}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border-radius:8px;overflow:hidden"><tr><td style="background:#073b4c;padding:20px 28px;color:#fff"><span style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;border-radius:6px;background:#16a085;font-weight:800;margin-right:10px">NC</span><strong style="font-size:20px;vertical-align:middle">NEVORA CORE</strong></td></tr><tr><td style="padding:30px 28px"><h1 style="font-size:26px;line-height:1.25;margin:0 0 18px">${safeHeading}</h1><p style="font-size:16px;line-height:1.6">${escapeHtml(words.hello)} ${safeName},</p>${paragraphs.map((paragraph) => `<p style="font-size:16px;line-height:1.6">${escapeHtml(paragraph)}</p>`).join('')}${detailsHtml}${actionHtml}<p style="font-size:14px;line-height:1.6;color:#52606d">${escapeHtml(words.help)} <a href="${escapeHtml(appBaseUrl)}" style="color:#005ea8">${escapeHtml(appBaseUrl)}</a>.${escapeHtml(support)}</p></td></tr><tr><td style="background:#f4f7fa;padding:18px 28px;color:#627d98;font-size:12px;line-height:1.5"><strong>${escapeHtml(words.disclosure)}</strong><br><br>${escapeHtml(words.privacy)}</td></tr></table></td></tr></table></body></html>`;
+  const text = [heading, '', `${words.hello} ${name || words.customer},`, '', ...paragraphs, '', ...details.map(([label, value]) => `${label}: ${value}`), action ? `${action.label}: ${action.url}` : '', '', `${words.help} ${appBaseUrl}.`, '', words.disclosure, '', words.privacy, '', 'Nevora Core'].filter(Boolean).join('\n');
+  const html = `<!doctype html><html lang="${localeCode}"><body style="margin:0;background:#eef2f6;color:#102a43;font-family:Arial,sans-serif"><div style="display:none;max-height:0;overflow:hidden">${safePreheader}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border-radius:8px;overflow:hidden"><tr><td style="background:#073b4c;padding:20px 28px;color:#fff"><span style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;border-radius:6px;background:#16a085;font-weight:800;margin-right:10px">NC</span><strong style="font-size:20px;vertical-align:middle">NEVORA CORE</strong></td></tr><tr><td style="padding:30px 28px"><h1 style="font-size:26px;line-height:1.25;margin:0 0 18px">${safeHeading}</h1><p style="font-size:16px;line-height:1.6">${escapeHtml(words.hello)} ${safeName},</p>${paragraphs.map((paragraph) => `<p style="font-size:16px;line-height:1.6">${escapeHtml(paragraph)}</p>`).join('')}${detailsHtml}${actionHtml}<p style="font-size:14px;line-height:1.6;color:#52606d">${escapeHtml(words.help)} <a href="${escapeHtml(appBaseUrl)}" style="color:#005ea8">${escapeHtml(appBaseUrl)}</a>.</p></td></tr><tr><td style="background:#f4f7fa;padding:18px 28px;color:#627d98;font-size:12px;line-height:1.5"><strong>${escapeHtml(words.disclosure)}</strong><br><br>${escapeHtml(words.privacy)}</td></tr></table></td></tr></table></body></html>`;
   return { text, html };
 }
 
 export function renderEmail(templateId, payload, options = {}) {
   const appBaseUrl = options.appBaseUrl || 'http://localhost:5173';
-  const supportEmail = options.supportEmail || '';
   const [localeCode, words] = emailLocale(payload.locale);
-  const layoutOptions = { appBaseUrl, supportEmail, localeCode, words };
+  const layoutOptions = { appBaseUrl, localeCode, words };
   const name = asText(payload.name, 120);
   const reference = asText(payload.reference || payload.transactionId || payload.withdrawalId, 160);
   const occurredAt = dateTime(payload.occurredAt || payload.createdAt || new Date().toISOString(), words.intl) || words.unavailable;
@@ -216,7 +214,6 @@ export function createEmailProcessor({ db, env = process.env, provider = createR
   const mode = requestedMode === 'live' && env.NODE_ENV === 'production' && !Number.isFinite(sendAfterTime) ? 'disabled' : requestedMode;
   const testRecipient = normalizeEmail(env.EMAIL_TEST_RECIPIENT);
   const appBaseUrl = String(env.APP_BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
-  const supportEmail = normalizeEmail(env.EMAIL_REPLY_TO);
 
   async function processOne(row) {
     const claimedAt = new Date(now()).toISOString();
@@ -227,8 +224,8 @@ export function createEmailProcessor({ db, env = process.env, provider = createR
       return true;
     }
     try {
-      const rendered = renderEmail(row.template_id, JSON.parse(row.payload_json), { appBaseUrl, supportEmail });
-      const response = await provider.send({ to: row.recipient, replyTo: supportEmail || undefined, ...rendered }, row.idempotency_key);
+      const rendered = renderEmail(row.template_id, JSON.parse(row.payload_json), { appBaseUrl });
+      const response = await provider.send({ to: row.recipient, ...rendered }, row.idempotency_key);
       const acceptedAt = new Date(now()).toISOString();
       db.prepare(`UPDATE email_outbox SET status = 'accepted', provider_status = 'accepted', provider_message_id = ?, last_error = NULL, sent_at = ?, updated_at = ?, next_attempt_at = NULL WHERE id = ?`).run(response.id || null, acceptedAt, acceptedAt, row.id);
     } catch (error) {

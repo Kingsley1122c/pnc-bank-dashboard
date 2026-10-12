@@ -32,6 +32,7 @@ test('email templates include authoritative details in HTML and plain text', () 
   assert.match(rendered.text, /TX-1/);
   assert.match(rendered.html, /NEVORA CORE/);
   assert.match(rendered.html, /https:\/\/nevoracore\.com/);
+  assert.doesNotMatch(rendered.html, /mailto:/);
   assert.match(rendered.text, /financial operations platform/);
 });
 
@@ -72,6 +73,7 @@ test('outbox accepts an email once and records provider acceptance separately fr
     });
     assert.deepEqual(await processor.processBatch(), { processed: 1, configured: true, mode: 'live' });
     assert.equal(sent.length, 1);
+    assert.equal('replyTo' in sent[0].message, false);
     assert.equal(sent[0].idempotencyKey, 'email:TX-1:sender');
     const row = db.prepare('SELECT * FROM email_outbox').get();
     assert.equal(row.status, 'accepted');

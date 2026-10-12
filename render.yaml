@@ -25,8 +25,6 @@ services:
         sync: false
       - key: RESEND_WEBHOOK_SECRET
         sync: false
-      - key: EMAIL_REPLY_TO
-        sync: false
       - key: EMAIL_FROM_NAME
         value: Nevora Core
       - key: EMAIL_TEST_RECIPIENT

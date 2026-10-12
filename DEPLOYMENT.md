@@ -56,13 +56,12 @@ Production delivery requires all of the following:
 
 - Resend sender domain shows verified.
 - `EMAIL_FROM` uses that verified domain.
-- `EMAIL_REPLY_TO` is a monitored address.
 - `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are Render secrets.
 - Controlled sending succeeds in restricted mode before `EMAIL_MODE` is changed to `live`.
 
 ## Email rollout and operations
 
-Configure these values in Render: `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `EMAIL_MODE`, `EMAIL_TEST_RECIPIENT`, and `APP_BASE_URL`. Set the Resend webhook URL to `https://nevoracore.com/api/webhooks/resend` and subscribe to delivered, bounced, complained, and failed email events only after TLS is active.
+Configure these values in Render: `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_MODE`, `EMAIL_TEST_RECIPIENT`, and `APP_BASE_URL`. Set the Resend webhook URL to `https://nevoracore.com/api/webhooks/resend` and subscribe to delivered, bounced, complained, and failed email events only after TLS is active.
 
 Use this rollout sequence:
 
