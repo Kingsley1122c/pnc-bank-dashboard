@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { closeDatabase, initializeDatabase } from './database.js';
-import { consumeActionToken, createEmailProcessor, enqueueEmail, issueActionToken, recordResendWebhook, renderEmail } from './email-service.js';
+import { consumeActionToken, createEmailProcessor, enqueueEmail, issueActionToken, recordResendWebhook, renderEmail, resolveResendSender } from './email-service.js';
 
 async function createFixture() {
   const directory = await mkdtemp(path.join(tmpdir(), 'pnc-email-'));
@@ -33,6 +33,29 @@ test('email templates include authoritative details in HTML and plain text', () 
   assert.match(rendered.html, /NEVORA CORE/);
   assert.match(rendered.html, /https:\/\/nevoracore\.com/);
   assert.match(rendered.text, /financial operations platform/);
+});
+
+test('email rendering preserves Nevora Core while applying supported Unicode locales', () => {
+  const korean = renderEmail('transfer-sent', { locale: 'ko', name: '고객', recipientName: '받는 사람', amount: '25.50', currency: 'USD', status: 'Completed', reference: 'TX-KO', occurredAt: '2026-10-10T12:00:00.000Z' }, { appBaseUrl: 'https://nevoracore.com' });
+  const chinese = renderEmail('welcome', { locale: 'zh-CN', name: '客户', accountLast4: '1234' }, { appBaseUrl: 'https://nevoracore.com' });
+  const japanese = renderEmail('login-alert', { locale: 'ja', name: '顧客', occurredAt: '2026-10-10T12:00:00.000Z' }, { appBaseUrl: 'https://nevoracore.com' });
+  const traditionalChinese = renderEmail('withdrawal', { locale: 'zh-TW', name: '客戶', amount: '10', currency: 'USD', status: 'Rejected', eventKey: 'rejected', reason: '資料不符', reference: 'WD-1', occurredAt: '2026-10-10T12:00:00.000Z' }, { appBaseUrl: 'https://nevoracore.com' });
+  assert.match(korean.html, /<html lang="ko">/);
+  assert.match(korean.text, /안녕하세요 고객/);
+  assert.match(korean.subject, /송금 완료/);
+  assert.match(korean.html, /NEVORA CORE/);
+  assert.match(chinese.html, /<html lang="zh-CN">/);
+  assert.match(chinese.text, /账户/);
+  assert.match(chinese.subject, /欢迎使用/);
+  assert.match(japanese.subject, /新しいサインイン/);
+  assert.match(traditionalChinese.text, /原因: 資料不符/);
+  assert.doesNotMatch(traditionalChinese.text, /Withdrawal|Rejected/);
+});
+
+test('Resend sender accepts the required named mailbox format without duplicating the name', () => {
+  assert.equal(resolveResendSender({ EMAIL_FROM: 'Nevora Core <no-reply@nevoracore.com>' }), 'Nevora Core <no-reply@nevoracore.com>');
+  assert.equal(resolveResendSender({ EMAIL_FROM: 'no-reply@nevoracore.com', EMAIL_FROM_NAME: 'Nevora Core' }), 'Nevora Core <no-reply@nevoracore.com>');
+  assert.equal(resolveResendSender({ EMAIL_FROM: 'Nevora Core\r\nBcc: attacker@example.com <no-reply@nevoracore.com>' }), null);
 });
 
 test('outbox accepts an email once and records provider acceptance separately from delivery', async () => {
@@ -75,6 +98,50 @@ test('provider failures remain retryable without duplicating the underlying even
     assert.ok(row.next_attempt_at);
     assert.equal(attempts, 1);
     assert.equal(db.prepare('SELECT COUNT(*) count FROM email_outbox').get().count, 1);
+  } finally { closeDatabase(db); }
+});
+
+test('stale processing claims recover after restart with the original idempotency key', async () => {
+  const db = await createFixture();
+  const sentKeys = [];
+  try {
+    queueTransfer(db);
+    db.prepare("UPDATE email_outbox SET status = 'processing', attempt_count = 1, updated_at = '2026-10-10T11:00:00.000Z'").run();
+    const processor = createEmailProcessor({
+      db,
+      env: { EMAIL_MODE: 'live' },
+      provider: { async send(_message, idempotencyKey) { sentKeys.push(idempotencyKey); return { id: 'resend-message-recovered' }; } },
+      now: () => Date.parse('2026-10-10T12:00:00.000Z'),
+    });
+
+    assert.equal((await processor.processBatch()).processed, 1);
+    assert.deepEqual(sentKeys, ['email:TX-1:sender']);
+    const row = db.prepare('SELECT status, attempt_count, provider_message_id FROM email_outbox').get();
+    assert.deepEqual(row, { status: 'accepted', attempt_count: 2, provider_message_id: 'resend-message-recovered' });
+  } finally { closeDatabase(db); }
+});
+
+test('production live mode fails closed without an activation cutoff and suppresses older jobs with one', async () => {
+  const db = await createFixture();
+  try {
+    queueTransfer(db);
+    const blocked = createEmailProcessor({
+      db,
+      env: { NODE_ENV: 'production', EMAIL_MODE: 'live' },
+      provider: { async send() { throw new Error('must not send'); } },
+    });
+    assert.equal(blocked.mode, 'disabled');
+
+    const guarded = createEmailProcessor({
+      db,
+      env: { NODE_ENV: 'production', EMAIL_MODE: 'live', EMAIL_SEND_AFTER: '2026-10-11T00:00:00.000Z' },
+      provider: { async send() { throw new Error('must not send'); } },
+      now: () => Date.parse('2026-10-11T00:01:00.000Z'),
+    });
+    assert.equal((await guarded.processBatch()).processed, 0);
+    assert.deepEqual(db.prepare('SELECT status, provider_status, last_error FROM email_outbox').get(), {
+      status: 'suppressed', provider_status: 'suppressed', last_error: 'Queued before email activation',
+    });
   } finally { closeDatabase(db); }
 });
 

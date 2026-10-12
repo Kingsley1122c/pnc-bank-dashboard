@@ -95,7 +95,7 @@ test('stale, cross-user, duplicate, and unauthorized withdrawal decisions fail w
       () => decideWithdrawal(db, { adminId: 'USR-OTHER', withdrawalId: created.id, decision: 'approve', expectedUpdatedAt: created.updatedAt }),
       (error) => error instanceof WithdrawalError && error.code === 'ADMIN_REQUIRED',
     );
-    const rejected = await decideWithdrawal(db, { adminId: 'ADM-OPERATOR', withdrawalId: created.id, decision: 'reject', expectedUpdatedAt: created.updatedAt });
+    const rejected = await decideWithdrawal(db, { adminId: 'ADM-OPERATOR', withdrawalId: created.id, decision: 'reject', expectedUpdatedAt: created.updatedAt, note: 'Destination details could not be verified.' });
     assert.equal(rejected.request.status, 'Rejected');
     await assert.rejects(
       () => decideWithdrawal(db, { adminId: 'ADM-OPERATOR', withdrawalId: created.id, decision: 'approve', expectedUpdatedAt: created.updatedAt }),
@@ -106,6 +106,9 @@ test('stale, cross-user, duplicate, and unauthorized withdrawal decisions fail w
       (error) => error instanceof WithdrawalError && error.code === 'WITHDRAWAL_NOT_FOUND',
     );
     assert.equal(db.prepare('SELECT COUNT(*) count FROM notifications WHERE user_id = ?').get('USR-REQUESTER').count, 1);
+    assert.match(db.prepare('SELECT message FROM notifications WHERE user_id = ?').get('USR-REQUESTER').message, /Reason: Destination details could not be verified\./);
+    const rejectionEmail = JSON.parse(db.prepare("SELECT payload_json FROM email_outbox WHERE event_type = 'withdrawal.rejected'").get().payload_json);
+    assert.match(rejectionEmail.message, /Reason: Destination details could not be verified\./);
   } finally { closeDatabase(db); }
 });
 

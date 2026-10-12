@@ -85,7 +85,7 @@ function insertAudit(db, { actorUserId, action, withdrawalId, details, createdAt
   `).run(actorUserId, action, withdrawalId, JSON.stringify(details), createdAt);
 }
 
-function enqueueWithdrawalEmail(db, row, { status, message, createdAt, eventKey }) {
+function enqueueWithdrawalEmail(db, row, { status, message, reason = '', createdAt, eventKey }) {
   enqueueEmail(db, {
     idempotencyKey: `email:${row.id}:withdrawal:${eventKey}`,
     eventType: `withdrawal.${eventKey}`,
@@ -102,6 +102,8 @@ function enqueueWithdrawalEmail(db, row, { status, message, createdAt, eventKey 
       occurredAt: createdAt,
       status,
       message,
+      eventKey,
+      reason,
     },
     createdAt,
   });
@@ -213,9 +215,12 @@ export async function decideWithdrawal(db, { adminId, withdrawalId, decision, ex
     `).run(status, approvalCodeHash, createdAt, JSON.stringify(raw), withdrawalId, expectedVersion);
     if (result.changes !== 1) throw new WithdrawalError(409, 'WITHDRAWAL_CONFLICT', 'This withdrawal changed. Refresh and try again.');
 
-    const message = normalizedDecision === 'approve'
+    const baseMessage = normalizedDecision === 'approve'
       ? `Withdrawal ${withdrawalId} was approved. Contact support for the secure withdrawal code.`
       : `Withdrawal ${withdrawalId} was rejected. No payout was completed and no funds were debited.`;
+    const message = normalizedDecision === 'reject' && normalizedNote
+      ? `${baseMessage} Reason: ${normalizedNote}`
+      : baseMessage;
     insertNotification(db, {
       id: `NOTICE-${withdrawalId}-${normalizedDecision}`,
       userId: row.requester_user_id,
@@ -234,6 +239,7 @@ export async function decideWithdrawal(db, { adminId, withdrawalId, decision, ex
     });
     enqueueWithdrawalEmail(db, findWithdrawal(db, withdrawalId), {
       status, eventKey: status.toLowerCase(), createdAt, message,
+      reason: normalizedDecision === 'reject' ? normalizedNote : '',
     });
 
     return { request: formatWithdrawal(findWithdrawal(db, withdrawalId)), approvalCode };

@@ -49,6 +49,7 @@ test('only the current owner can transfer to another active admin', async () => 
     assert.equal(ownership.ownerUserId, 'ADM-SECOND');
     assert.equal(ownership.version, 2);
     assert.equal(db.prepare("SELECT COUNT(*) count FROM audit_logs WHERE action = 'ownership.transferred'").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM email_outbox WHERE event_type = 'ownership.transferred'").get().count, 2);
     assert.equal(db.prepare("SELECT role FROM users WHERE id = 'ADM-FIRST'").get().role, 'admin');
     assert.equal(db.prepare("SELECT role FROM users WHERE id = 'ADM-SECOND'").get().role, 'admin');
   } finally { closeDatabase(db); }

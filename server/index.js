@@ -19,7 +19,8 @@ import {
   updateDatabaseAccountPassword,
 } from './database.js';
 import { consumeActionToken, createEmailProcessor, createResendProvider, enqueueEmail, issueActionToken, recordResendWebhook } from './email-service.js';
-import { hashPassword, isValidEmail, normalizeEmail, sanitizeAccount } from './security.js';
+import { hashPassword, hashSessionToken, isValidEmail, normalizeEmail, sanitizeAccount } from './security.js';
+import { createCardRequest, createCase, decideCardRequest, decideCase, listServiceRequests, ServiceRequestError } from './service-requests.js';
 import { claimOwnership, getOwnership, listOwnershipCandidates, OwnershipError, transferOwnership } from './ownership.js';
 import { createAdminAdjustment, createInternalTransfer, TransactionError } from './transactions.js';
 import {
@@ -236,6 +237,7 @@ const authService = createAuthService({
   secureCookies: getAppBaseUrl().startsWith('https://') || process.env.NODE_ENV === 'production',
 });
 const authRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 20 });
+const verificationResendRateLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, limit: 3 });
 const allowedOrigins = getAllowedOrigins();
 
 function isTrustedRequestOrigin(request) {
@@ -334,7 +336,20 @@ app.post('/api/auth/login', authRateLimit, async (request, response) => {
       return;
     }
 
+    const signedInAt = new Date(result.session.createdAt).toISOString();
+    enqueueEmail(database, {
+      idempotencyKey: `email:login:${hashSessionToken(result.token)}`,
+      eventType: 'account.login-succeeded',
+      aggregateType: 'user',
+      aggregateId: result.account.id,
+      recipient: result.account.email,
+      recipientUserId: result.account.id,
+      templateId: 'login-alert',
+      payload: { name: result.account.name, occurredAt: signedInAt },
+      createdAt: signedInAt,
+    });
     authService.setSessionCookie(response, result.token);
+    scheduleEmailProcessing();
     response.json({ user: result.account, expiresAt: new Date(result.session.expiresAt).toISOString() });
   } catch {
     response.status(500).json({ message: 'Unable to sign in right now.' });
@@ -342,7 +357,7 @@ app.post('/api/auth/login', authRateLimit, async (request, response) => {
 });
 
 app.post('/api/auth/register', authRateLimit, async (request, response) => {
-  const { name, email, phone, password, dateOfBirth, gender, avatarImage = '' } = request.body ?? {};
+  const { name, email, phone, password, dateOfBirth, gender, avatarImage = '', locale = 'en' } = request.body ?? {};
   const normalizedName = String(name ?? '').trim();
   const normalizedEmailAddress = normalizeEmail(email);
   const normalizedPhone = String(phone ?? '').trim();
@@ -384,6 +399,7 @@ app.post('/api/auth/register', authRateLimit, async (request, response) => {
       passwordHash: await hashPassword(password),
       dateOfBirth,
       gender,
+      locale: String(locale).trim().slice(0, 20) || 'en',
       segment: 'Digital Client',
       avatar: normalizedName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
       avatarImage: String(avatarImage).slice(0, 1_500_000),
@@ -497,6 +513,28 @@ app.post('/api/auth/verify-email', authRateLimit, (request, response) => {
     }
     response.status(500).json({ message: 'Unable to verify the email address right now.' });
   }
+});
+
+app.post('/api/auth/resend-verification', authService.requireAuth, verificationResendRateLimit, (request, response) => {
+  const user = database.prepare("SELECT id, name, email, email_verified_at FROM users WHERE id = ? AND role = 'user' AND status != 'Suspended'").get(request.auth.account.id);
+  if (!user) {
+    response.status(404).json({ message: 'Account not found.' });
+    return;
+  }
+  if (user.email_verified_at) {
+    response.status(409).json({ message: 'This email address is already verified.' });
+    return;
+  }
+  database.transaction(() => {
+    const verification = issueActionToken(database, { userId: user.id, purpose: 'email-verification', lifetimeMs: 24 * 60 * 60 * 1000 });
+    enqueueEmail(database, {
+      idempotencyKey: `email:verification:${verification.id}`, eventType: 'account.email-verification-requested', aggregateType: 'user', aggregateId: user.id,
+      recipient: user.email, recipientUserId: user.id, templateId: 'email-verification',
+      payload: { name: user.name, actionUrl: `${getAppBaseUrl()}/verify-email?token=${encodeURIComponent(verification.token)}` },
+    });
+  }).immediate();
+  scheduleEmailProcessing();
+  response.status(202).json({ message: 'A new verification email has been queued.' });
 });
 
 app.get('/api/auth/session', async (request, response) => {
@@ -777,6 +815,63 @@ function handleCommunicationError(response, error, fallbackMessage) {
   }
   response.status(500).json({ message: fallbackMessage });
 }
+
+function handleServiceRequestError(response, error, fallbackMessage) {
+  if (error instanceof ServiceRequestError) {
+    response.status(error.status).json({ code: error.code, message: error.message });
+    return;
+  }
+  response.status(500).json({ message: fallbackMessage });
+}
+
+app.get('/api/service-requests', authService.requireAuth, (request, response) => {
+  const requesterId = request.auth.account.role === 'admin' ? null : request.auth.account.id;
+  response.json(listServiceRequests(database, { requesterId }));
+});
+
+app.post('/api/cards', authService.requireAuth, (request, response) => {
+  try {
+    const result = createCardRequest(database, { requesterId: request.auth.account.id, cardType: request.body?.cardType, idempotencyKey: request.get('Idempotency-Key') });
+    broadcastEvent('service-requests');
+    scheduleEmailProcessing();
+    response.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    handleServiceRequestError(response, error, 'Unable to submit the card request right now.');
+  }
+});
+
+app.patch('/api/admin/cards/:requestId', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
+  try {
+    const result = decideCardRequest(database, { adminId: request.auth.account.id, requestId: request.params.requestId, status: request.body?.status, reason: request.body?.reason });
+    broadcastEvent('service-requests');
+    scheduleEmailProcessing();
+    response.json(result);
+  } catch (error) {
+    handleServiceRequestError(response, error, 'Unable to update the card request right now.');
+  }
+});
+
+app.post('/api/cases', authService.requireAuth, (request, response) => {
+  try {
+    const result = createCase(database, { requesterId: request.auth.account.id, type: request.body?.type, subject: request.body?.subject, details: request.body?.details, idempotencyKey: request.get('Idempotency-Key') });
+    broadcastEvent('service-requests');
+    scheduleEmailProcessing();
+    response.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    handleServiceRequestError(response, error, 'Unable to submit the request right now.');
+  }
+});
+
+app.patch('/api/admin/cases/:caseId', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
+  try {
+    const result = decideCase(database, { adminId: request.auth.account.id, caseId: request.params.caseId, status: request.body?.status, reason: request.body?.reason });
+    broadcastEvent('service-requests');
+    scheduleEmailProcessing();
+    response.json(result);
+  } catch (error) {
+    handleServiceRequestError(response, error, 'Unable to update the request right now.');
+  }
+});
 
 app.post('/api/admin/communications/preview', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
   try {

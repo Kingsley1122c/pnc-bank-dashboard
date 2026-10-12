@@ -1,3 +1,4 @@
+import { enqueueEmail } from './email-service.js';
 import { verifyPassword } from './security.js';
 
 export class OwnershipError extends Error {
@@ -76,6 +77,11 @@ export async function claimOwnership(db, { actorUserId, password, confirmation, 
       INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at)
       VALUES (?, 'ownership.claimed', 'platform', 'platform-owner', ?, ?)
     `).run(actorUserId, JSON.stringify({ fromOwnerUserId: null, toOwnerUserId: actorUserId, previousVersion: version, version: version + 1 }), updatedAt);
+    enqueueEmail(db, {
+      idempotencyKey: `email:ownership:claimed:${actorUserId}:${version + 1}`, eventType: 'ownership.claimed', aggregateType: 'platform', aggregateId: 'platform-owner',
+      recipient: actor.email, recipientUserId: actor.id, templateId: 'account-status',
+      payload: { name: actor.name, subject: 'Nevora Core platform ownership claimed', message: 'Your administrator account is now the platform owner. If you did not authorize this change, begin an immediate security review.', occurredAt: updatedAt }, createdAt: updatedAt,
+    });
     return formatOwnership(readOwnerRow(db));
   });
   return execute.immediate();
@@ -108,6 +114,11 @@ export async function transferOwnership(db, { actorUserId, targetUserId, passwor
       INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, details_json, created_at)
       VALUES (?, 'ownership.transferred', 'platform', 'platform-owner', ?, ?)
     `).run(actorUserId, JSON.stringify({ fromOwnerUserId: actorUserId, toOwnerUserId: targetUserId, previousVersion: version, version: version + 1 }), updatedAt);
+    for (const recipient of [actor, target]) enqueueEmail(db, {
+      idempotencyKey: `email:ownership:transferred:${recipient.id}:${version + 1}`, eventType: 'ownership.transferred', aggregateType: 'platform', aggregateId: 'platform-owner',
+      recipient: recipient.email, recipientUserId: recipient.id, templateId: 'account-status',
+      payload: { name: recipient.name, subject: 'Nevora Core platform ownership changed', message: `Platform ownership was transferred from ${actor.name} to ${target.name}. If you did not authorize this change, begin an immediate security review.`, occurredAt: updatedAt }, createdAt: updatedAt,
+    });
     return formatOwnership(readOwnerRow(db));
   });
   return execute.immediate();

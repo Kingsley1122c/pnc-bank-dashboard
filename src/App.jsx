@@ -1319,6 +1319,10 @@ function getAdminCommunicationsApiUrl() {
   return `${getSharedApiBaseUrl()}/api/admin/communications`;
 }
 
+function getServiceRequestsApiUrl() {
+  return `${getSharedApiBaseUrl()}/api/service-requests`;
+}
+
 function getAuthApiUrl(path) {
   return `${getSharedApiBaseUrl()}/api/auth/${path}`;
 }
@@ -1383,6 +1387,33 @@ async function verifyEmail(token) {
   });
   const payload = await readApiPayload(response);
   if (!response.ok) throw new Error(payload.message ?? 'Unable to verify this email address.');
+  return payload;
+}
+
+async function fetchServiceRequests() {
+  const response = await fetch(getServiceRequestsApiUrl(), { credentials: 'include' });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to load service requests.');
+  return { cards: payload.cards ?? [], cases: payload.cases ?? [] };
+}
+
+async function createServiceRequest(path, body) {
+  const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `request-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const response = await fetch(`${getSharedApiBaseUrl()}${path}`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(body),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to submit the request.');
+  return payload;
+}
+
+async function updateServiceRequest(path, body) {
+  const response = await fetch(`${getSharedApiBaseUrl()}${path}`, {
+    method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to update the request.');
   return payload;
 }
 
@@ -2263,6 +2294,17 @@ function App() {
   }, [serverAuthenticated]);
 
   useEffect(() => {
+    if (!serverAuthenticated) return undefined;
+    let cancelled = false;
+    fetchServiceRequests().then(({ cards, cases }) => {
+      if (cancelled) return;
+      setAdminCardRecords((current) => [...cards, ...current.filter((entry) => !cards.some((remote) => remote.id === entry.id))]);
+      setAdminCaseRecords((current) => [...cases, ...current.filter((entry) => !cases.some((remote) => remote.id === entry.id))]);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverAuthenticated]);
+
+  useEffect(() => {
     writeStorage(ACTIVE_USER_STORAGE_KEY, activeUserId || null);
   }, [activeUserId]);
 
@@ -2680,6 +2722,16 @@ function App() {
       }
     }
 
+    async function refreshServiceRequests() {
+      try {
+        const { cards, cases } = await fetchServiceRequests();
+        setAdminCardRecords((current) => [...cards, ...current.filter((entry) => !cards.some((remote) => remote.id === entry.id))]);
+        setAdminCaseRecords((current) => [...cases, ...current.filter((entry) => !cases.some((remote) => remote.id === entry.id))]);
+      } catch {
+        return;
+      }
+    }
+
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
@@ -2694,6 +2746,10 @@ function App() {
 
         if (payload.type === 'withdrawals') {
           refreshWithdrawals();
+        }
+
+        if (payload.type === 'service-requests') {
+          refreshServiceRequests();
         }
       } catch {
         return;
@@ -2902,6 +2958,7 @@ function App() {
         dateOfBirth: authForm.dateOfBirth,
         gender: authForm.gender,
         avatarImage: profilePhoto,
+        locale: selectedLanguage,
       });
       const remoteAccounts = (await fetchRemoteAccounts()).map(normalizeAccountDefaults);
       setServerAuthenticated(true);
@@ -3161,19 +3218,17 @@ function App() {
     };
   }
 
-  function handleSubmitCardRequest(cardType) {
+  async function handleSubmitCardRequest(cardType) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Card requests are only available for signed-in retail users.' };
     }
 
-    const request = {
-      id: `VC-${Math.floor(100 + Math.random() * 900)}`,
-      type: `${cardType} ATM Card`,
-      requested: getDisplayDate(),
-      status: 'Pending',
-      requesterId: activeUser.id,
-      requesterName: activeUser.name,
-    };
+    let request;
+    try {
+      request = (await createServiceRequest('/api/cards', { cardType })).request;
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to submit the card request.' };
+    }
 
     setAdminCardRecords((current) => [request, ...current]);
     setAdminNotice(`${activeUser.name} requested a ${cardType.toLowerCase()}.`);
@@ -3186,7 +3241,7 @@ function App() {
     };
   }
 
-  function handleSubmitSupportCase(supportForm) {
+  async function handleSubmitSupportCase(supportForm) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Support requests are only available for signed-in retail users.' };
     }
@@ -3198,17 +3253,12 @@ function App() {
       return { ok: false, message: 'Enter a support subject and a clear message.' };
     }
 
-    const supportCase = {
-      id: `CASE-${Math.floor(300 + Math.random() * 700)}`,
-      type: 'Support',
-      subject,
-      owner: activeUser.name,
-      requesterId: activeUser.id,
-      priority: supportForm.priority,
-      status: 'Open',
-      assignee: 'Support Desk',
-      message,
-    };
+    let supportCase;
+    try {
+      supportCase = (await createServiceRequest('/api/cases', { type: 'Support', subject, details: { priority: supportForm.priority, assignee: 'Support Desk', message } })).request;
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to open the support case.' };
+    }
 
     setAdminCaseRecords((current) => [supportCase, ...current]);
     setAdminNotice(`Support case opened for ${activeUser.name}.`);
@@ -3223,7 +3273,7 @@ function App() {
     };
   }
 
-  function handleSubmitLoanRequest(loanForm) {
+  async function handleSubmitLoanRequest(loanForm) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Loan requests are only available for signed-in retail users.' };
     }
@@ -3239,20 +3289,12 @@ function App() {
       return { ok: false, message: 'Enter the purpose of the loan request.' };
     }
 
-    const loanCase = {
-      id: `CASE-${Math.floor(300 + Math.random() * 700)}`,
-      type: 'Loan',
-      subject: `${loanForm.product} request`,
-      owner: activeUser.name,
-      requesterId: activeUser.id,
-      priority: amountValue >= 25000 ? 'High' : 'Medium',
-      status: 'Open',
-      assignee: 'Lending Desk',
-      amountRequested: formatCurrency(amountValue),
-      tenor: `${loanForm.tenor} months`,
-      purpose,
-      sourceAccount: loanForm.sourceAccount,
-    };
+    let loanCase;
+    try {
+      loanCase = (await createServiceRequest('/api/cases', { type: 'Loan', subject: `${loanForm.product} request`, details: { priority: amountValue >= 25000 ? 'High' : 'Medium', assignee: 'Lending Desk', amountRequested: formatCurrency(amountValue), tenor: `${loanForm.tenor} months`, purpose, sourceAccount: loanForm.sourceAccount } })).request;
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to submit the loan request.' };
+    }
 
     setAdminCaseRecords((current) => [loanCase, ...current]);
     setAdminNotice(`Loan request opened for ${activeUser.name}.`);
@@ -3267,7 +3309,7 @@ function App() {
     };
   }
 
-  function handleSubmitInvestmentRequest(investmentForm) {
+  async function handleSubmitInvestmentRequest(investmentForm) {
     if (!activeUser || activeUser.role === 'admin') {
       return { ok: false, message: 'Investment requests are only available for signed-in retail users.' };
     }
@@ -3283,20 +3325,12 @@ function App() {
       return { ok: false, message: 'Enter the investment goal or objective.' };
     }
 
-    const investmentCase = {
-      id: `CASE-${Math.floor(300 + Math.random() * 700)}`,
-      type: 'Investment',
-      subject: `${investmentForm.plan} interest`,
-      owner: activeUser.name,
-      requesterId: activeUser.id,
-      priority: amountValue >= 20000 ? 'High' : 'Medium',
-      status: 'Open',
-      assignee: 'Wealth Desk',
-      amountRequested: formatCurrency(amountValue),
-      horizon: investmentForm.horizon,
-      goal,
-      fundingAccount: investmentForm.fundingAccount,
-    };
+    let investmentCase;
+    try {
+      investmentCase = (await createServiceRequest('/api/cases', { type: 'Investment', subject: `${investmentForm.plan} interest`, details: { priority: amountValue >= 20000 ? 'High' : 'Medium', assignee: 'Wealth Desk', amountRequested: formatCurrency(amountValue), horizon: investmentForm.horizon, goal, fundingAccount: investmentForm.fundingAccount } })).request;
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to submit the investment request.' };
+    }
 
     setAdminCaseRecords((current) => [investmentCase, ...current]);
     setAdminNotice(`Investment request opened for ${activeUser.name}.`);
@@ -4112,6 +4146,12 @@ function App() {
 
   async function handleCardGeneration(requestId) {
     let updatedRequest = null;
+    try {
+      updatedRequest = (await updateServiceRequest(`/api/admin/cards/${encodeURIComponent(requestId)}`, { status: 'Active' })).request;
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Unable to activate the card request.');
+      return;
+    }
 
     setAdminCardRecords((current) =>
       current.map((request) => {
@@ -4119,13 +4159,7 @@ function App() {
           return request;
         }
 
-        updatedRequest = {
-          ...request,
-          status: 'Active',
-          type: request.type.includes('Generated') ? request.type : `${request.type} - Generated`,
-        };
-
-        return updatedRequest;
+        return { ...request, ...updatedRequest, type: request.type.includes('Generated') ? request.type : `${request.type} - Generated` };
       }),
     );
 
@@ -4297,8 +4331,14 @@ function App() {
     return '';
   }
 
-  function handleCaseAction(caseId, nextStatus, customNote = '') {
+  async function handleCaseAction(caseId, nextStatus, customNote = '') {
     let updatedCase = null;
+    try {
+      updatedCase = (await updateServiceRequest(`/api/admin/cases/${encodeURIComponent(caseId)}`, { status: nextStatus, reason: customNote || getCaseAdminGuidance(adminCaseRecords.find((entry) => entry.id === caseId) ?? {}, nextStatus, '') })).request;
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Unable to update the request.');
+      return;
+    }
 
     setAdminCaseRecords((current) =>
       current.map((entry) => {
@@ -4315,13 +4355,13 @@ function App() {
               ? 'Keep your account details and supporting documents ready.'
               : entry.nextAction;
 
-        updatedCase = {
+        return {
           ...entry,
+          ...updatedCase,
           status: nextStatus,
           adminNote: adminNote || entry.adminNote,
           nextAction,
         };
-        return updatedCase;
       }),
     );
 
