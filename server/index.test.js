@@ -126,6 +126,8 @@ test('account API requires a session and never returns password material', async
   const testDatabase = new Database(path.join(dataDirectory, 'pnc-bank.sqlite'));
   context.after(() => testDatabase.close());
   assert.equal(testDatabase.prepare("SELECT COUNT(*) count FROM email_outbox WHERE event_type = 'account.login-succeeded' AND recipient_user_id = 'USR-0001'").get().count, 1);
+  const communicationsResponse = await fetch(`${baseUrl}/api/admin/communications`, { headers: { Cookie: sessionCookie } });
+  assert.equal(communicationsResponse.status, 403);
   assert.deepEqual(
     testDatabase.prepare('SELECT template_id FROM email_outbox WHERE recipient_user_id = ? ORDER BY template_id').all(registered.user.id).map((row) => row.template_id),
     ['email-verification', 'welcome'],

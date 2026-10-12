@@ -910,7 +910,14 @@ app.get('/api/admin/communications', authService.requireAuth, authService.requir
         SUM(CASE WHEN provider_status = 'complained' THEN 1 ELSE 0 END) complained
       FROM email_outbox
     `).get();
-    response.json({ campaigns, totals, provider: { configured: emailProcessor.configured, mode: emailProcessor.mode } });
+    const recentDeliveries = database.prepare(`
+      SELECT event_type AS eventType, template_id AS templateId, status, provider_status AS providerStatus,
+        attempt_count AS attemptCount, last_error AS lastError, created_at AS createdAt, updated_at AS updatedAt
+      FROM email_outbox
+      ORDER BY id DESC
+      LIMIT 25
+    `).all();
+    response.json({ campaigns, totals, recentDeliveries, provider: { configured: emailProcessor.configured, mode: emailProcessor.mode } });
   } catch (error) {
     handleCommunicationError(response, error, 'Unable to load communication history right now.');
   }
