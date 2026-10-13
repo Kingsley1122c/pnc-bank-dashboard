@@ -26,6 +26,6 @@
   },
   "devDependencies": {
     "@types/estree": "^1.0.5",
-    "vite": "^5.4.10"
+    "vite": "^6.4.3"
   }
 }
