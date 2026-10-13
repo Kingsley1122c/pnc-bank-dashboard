@@ -2117,7 +2117,9 @@ function App() {
 
     return adminUserRecords.filter((user) => {
       const queryMatch =
-        !query || [user.name, user.segment, user.kyc, user.status, user.customerId, user.accountNumber ?? ''].some((value) => value.toLowerCase().includes(query));
+        !query
+        || [user.name, user.email ?? '', user.accountId ?? '', user.segment, user.kyc, user.status, user.customerId, user.accountNumber ?? '']
+          .some((value) => value.toLowerCase().includes(query));
       const statusMatch = adminUserStatusFilter === 'All' || user.status === adminUserStatusFilter;
       return queryMatch && statusMatch;
     });
