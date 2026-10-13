@@ -2663,7 +2663,6 @@ function App() {
         setAdminCaseRecords(remoteWorkspace.adminCaseRecords);
         setAdminSettings(remoteWorkspace.adminSettings);
         setAdminExportHistory(remoteWorkspace.adminExportHistory);
-        setSelectedUser(remoteWorkspace.selectedUser);
       } catch {
         return;
       }
@@ -2711,7 +2710,6 @@ function App() {
         setAdminCaseRecords(remoteWorkspace.adminCaseRecords);
         setAdminSettings(remoteWorkspace.adminSettings);
         setAdminExportHistory(remoteWorkspace.adminExportHistory);
-        setSelectedUser(remoteWorkspace.selectedUser);
       } catch {
         return;
       }
