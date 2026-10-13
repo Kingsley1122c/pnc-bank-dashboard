@@ -122,6 +122,7 @@ test('account API requires a session and never returns password material', async
     }),
   });
   assert.equal(registerResponse.status, 201);
+  const registeredCookie = registerResponse.headers.get('set-cookie')?.split(';')[0];
   const registered = await registerResponse.json();
   const testDatabase = new Database(path.join(dataDirectory, 'pnc-bank.sqlite'));
   context.after(() => testDatabase.close());
@@ -132,6 +133,20 @@ test('account API requires a session and never returns password material', async
     testDatabase.prepare('SELECT template_id FROM email_outbox WHERE recipient_user_id = ? ORDER BY template_id').all(registered.user.id).map((row) => row.template_id),
     ['email-verification', 'welcome'],
   );
+  const resendVerificationResponse = await fetch(`${baseUrl}/api/auth/resend-verification`, {
+    method: 'POST', headers: { Origin: browserOrigin, Cookie: registeredCookie },
+  });
+  assert.equal(resendVerificationResponse.status, 202);
+  const verificationJob = testDatabase.prepare("SELECT payload_json FROM email_outbox WHERE recipient_user_id = ? AND template_id = 'email-verification' ORDER BY id DESC LIMIT 1").get(registered.user.id);
+  const verificationToken = new URL(JSON.parse(verificationJob.payload_json).actionUrl).searchParams.get('token');
+  const verificationResponse = await fetch(`${baseUrl}/api/auth/verify-email`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token: verificationToken }),
+  });
+  assert.equal(verificationResponse.status, 200);
+  const reusedVerificationResponse = await fetch(`${baseUrl}/api/auth/verify-email`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token: verificationToken }),
+  });
+  assert.equal(reusedVerificationResponse.status, 400);
   const resetRequest = await fetch(`${baseUrl}/api/auth/request-password-reset`, {
     method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: registered.user.email }),
   });
@@ -153,6 +168,14 @@ test('account API requires a session and never returns password material', async
   });
   assert.equal(reusedResetResponse.status, 400);
   assert.equal(testDatabase.prepare("SELECT COUNT(*) count FROM email_outbox WHERE recipient_user_id = ? AND template_id = 'password-changed'").get(registered.user.id).count, 1);
+  const oldPasswordLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: registered.user.email, password: 'recipient-password' }),
+  });
+  assert.equal(oldPasswordLogin.status, 401);
+  const newPasswordLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { Origin: browserOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: registered.user.email, password: 'replacement-password' }),
+  });
+  assert.equal(newPasswordLogin.status, 200);
   const deniedCampaignResponse = await fetch(`${baseUrl}/api/admin/communications`, {
     method: 'POST',
     headers: { Origin: browserOrigin, Cookie: sessionCookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'denied-campaign-0001' },

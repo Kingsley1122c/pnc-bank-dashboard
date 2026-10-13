@@ -2090,8 +2090,11 @@ function App() {
   const lastRemoteAccountsSnapshotRef = useRef('');
   const lastRemoteAdminWorkspaceSnapshotRef = useRef('');
   const adminWorkspaceVersionRef = useRef(null);
+  const adminWorkspaceSaveChainRef = useRef(Promise.resolve());
   const loadingRequestRef = useRef(0);
   const withdrawalFailureTimersRef = useRef(new Map());
+  const adminFormAccountIdRef = useRef(null);
+  const adminFundingRequestRef = useRef(false);
 
   const activeUser = accounts.find((account) => account.id === activeUserId) ?? null;
   const userBalances = activeUser?.accounts ?? [];
@@ -2357,7 +2360,6 @@ function App() {
 
         lastRemoteAdminWorkspaceSnapshotRef.current = remoteSnapshot;
         adminWorkspaceVersionRef.current = remotePayload.updatedAt;
-        setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
@@ -2554,6 +2556,12 @@ function App() {
       return;
     }
 
+    if (adminFormAccountIdRef.current === selectedAdminRecord.accountId) {
+      return;
+    }
+
+    adminFormAccountIdRef.current = selectedAdminRecord.accountId;
+
     setUserEditForm({
       segment: selectedAdminRecord.segment,
       kycLevel: selectedAdminRecord.kycLevel,
@@ -2607,26 +2615,22 @@ function App() {
       return;
     }
 
-    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      adminWorkspaceSaveChainRef.current = adminWorkspaceSaveChainRef.current.then(async () => {
+        if (snapshot === lastRemoteAdminWorkspaceSnapshotRef.current) return;
 
-    async function pushSharedAdminWorkspace() {
-      try {
-        const result = await saveRemoteAdminWorkspace(adminWorkspaceSnapshot, adminWorkspaceVersionRef.current);
-
-        if (!cancelled) {
+        try {
+          const result = await saveRemoteAdminWorkspace(adminWorkspaceSnapshot, adminWorkspaceVersionRef.current);
           lastRemoteAdminWorkspaceSnapshotRef.current = snapshot;
           adminWorkspaceVersionRef.current = result.updatedAt;
+        } catch (error) {
+          setAdminNotice(error instanceof Error ? error.message : 'The admin workspace changed. Refresh and try again.');
         }
-      } catch (error) {
-        if (!cancelled) setAdminNotice(error instanceof Error ? error.message : 'The admin workspace changed. Refresh and try again.');
-        return;
-      }
-    }
-
-    pushSharedAdminWorkspace();
+      });
+    }, 250);
 
     return () => {
-      cancelled = true;
+      window.clearTimeout(timeoutId);
     };
   }, [activeUser?.role, adminWorkspaceSnapshot, remoteAdminWorkspaceReady, serverAuthenticated]);
 
@@ -2647,7 +2651,6 @@ function App() {
 
         lastRemoteAdminWorkspaceSnapshotRef.current = remoteSnapshot;
         adminWorkspaceVersionRef.current = remotePayload.updatedAt;
-        setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, accounts));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
@@ -2696,7 +2699,6 @@ function App() {
 
         lastRemoteAdminWorkspaceSnapshotRef.current = remoteSnapshot;
         adminWorkspaceVersionRef.current = remotePayload.updatedAt;
-        setAdminSection(remoteWorkspace.adminSection);
         setAdminNotice(remoteWorkspace.adminNotice);
         setAdminUserRecords(syncAdminUserRecordsWithAccounts(remoteWorkspace.adminUserRecords, latestAccountsRef.current));
         setAdminCardRecords(remoteWorkspace.adminCardRecords);
@@ -3600,11 +3602,9 @@ function App() {
   }
 
   function handleAdminSectionChange(section) {
-    runLoadingFlow(`admin-${section.toLowerCase().replace(/\s+/g, '-')}`, () => {
-      setAdminSection(section);
-      setAdminNotice(`${section} opened.`);
-      pushAdminActivity(`${activeUser?.name ?? 'Admin'} opened ${section}.`);
-    });
+    setAdminSection(section);
+    setAdminNotice(`${section} opened.`);
+    pushAdminActivity(`${activeUser?.name ?? 'Admin'} opened ${section}.`);
   }
 
   function openAnnouncementComposer() {
@@ -3755,27 +3755,21 @@ function App() {
   }
 
   function handleAdminUserReview(name) {
-    runLoadingFlow('admin-user-workspace', () => {
-      setSelectedUser(name);
-      setAdminUsersView('detail');
-      setAdminUserWorkspaceTab('Overview');
-      setAdminSection('Users Management');
-      setAdminNotice(`${name} loaded into the review panel.`);
-      pushAdminActivity(`${activeUser?.name ?? 'Admin'} opened ${name}'s profile.`);
-    });
+    setSelectedUser(name);
+    setAdminUsersView('detail');
+    setAdminUserWorkspaceTab('Overview');
+    setAdminSection('Users Management');
+    setAdminNotice(`${name} loaded into the review panel.`);
+    pushAdminActivity(`${activeUser?.name ?? 'Admin'} opened ${name}'s profile.`);
   }
 
   function handleCloseAdminUserWorkspace() {
-    runLoadingFlow('admin-users-management', () => {
-      setAdminUsersView('list');
-      setAdminUserWorkspaceTab('Overview');
-    });
+    setAdminUsersView('list');
+    setAdminUserWorkspaceTab('Overview');
   }
 
   function handleAdminUserWorkspaceTabChange(tab) {
-    runLoadingFlow(`admin-workspace-${tab.toLowerCase()}`, () => {
-      setAdminUserWorkspaceTab(tab);
-    });
+    setAdminUserWorkspaceTab(tab);
   }
 
   function updateUserEditForm(field, value) {
@@ -3828,6 +3822,10 @@ function App() {
   }
 
   async function handleAdminAddFunds() {
+    if (adminFundingRequestRef.current) {
+      return;
+    }
+
     if (!selectedAdminRecord) {
       setAdminFundingResult({
         ok: false,
@@ -3891,6 +3889,7 @@ function App() {
     }
 
     const note = adminCreditForm.note.trim();
+    adminFundingRequestRef.current = true;
     try {
       const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `adjustment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const result = await requestAdminBalanceAdjustment({
@@ -3932,6 +3931,8 @@ function App() {
       const message = error instanceof Error ? error.message : 'Unable to post customer funds right now.';
       setAdminNotice(message);
       setAdminFundingResult({ ok: false, kind: 'admin-funding', title: 'Funding could not be posted', message, createdAt: new Date().toISOString(), auditLabel: 'Needs Review' });
+    } finally {
+      adminFundingRequestRef.current = false;
     }
   }
 
