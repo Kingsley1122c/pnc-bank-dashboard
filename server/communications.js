@@ -30,9 +30,9 @@ function normalizeInput(input) {
 }
 
 function resolveRecipients(db, input) {
-  if (input.audienceType === 'all') return db.prepare("SELECT id, name, email FROM users WHERE role = 'user' AND status != 'Suspended' ORDER BY id").all();
+  if (input.audienceType === 'all') return db.prepare("SELECT id, name, email FROM users WHERE role = 'user' AND status IN ('Active', 'Flagged') ORDER BY id").all();
   const placeholders = input.recipientIds.map(() => '?').join(',');
-  const rows = db.prepare(`SELECT id, name, email FROM users WHERE role = 'user' AND status != 'Suspended' AND id IN (${placeholders}) ORDER BY id`).all(...input.recipientIds);
+  const rows = db.prepare(`SELECT id, name, email FROM users WHERE role = 'user' AND status IN ('Active', 'Flagged') AND id IN (${placeholders}) ORDER BY id`).all(...input.recipientIds);
   if (rows.length !== input.recipientIds.length) throw new CommunicationError(400, 'INVALID_RECIPIENTS', 'One or more selected customers are unavailable.');
   return rows;
 }

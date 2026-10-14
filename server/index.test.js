@@ -321,6 +321,43 @@ test('account API requires a session and never returns password material', async
   const adjustment = await adjustmentResponse.json();
   assert.equal(adjustment.account.accounts.find((account) => account.label === 'Current').amount, 14);
 
+  const deletionRegistrationResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Deletion Candidate', email: 'delete-and-recreate@example.com', phone: '+1 202 555 0108',
+      password: 'deletion-password', dateOfBirth: '1992-02-02', gender: 'Other',
+    }),
+  });
+  assert.equal(deletionRegistrationResponse.status, 201);
+  const deletionCandidate = (await deletionRegistrationResponse.json()).user;
+  const deletionAccountsResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { Cookie: adminCookie } });
+  const deletionCandidateVersion = (await deletionAccountsResponse.json()).accounts.find((account) => account.id === deletionCandidate.id).updatedAt;
+  const rejectedDeletionResponse = await fetch(`${baseUrl}/api/admin/accounts/${deletionCandidate.id}`, {
+    method: 'DELETE',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedUpdatedAt: deletionCandidateVersion, confirmation: 'DELETE WRONG' }),
+  });
+  assert.equal(rejectedDeletionResponse.status, 400);
+  const deletionResponse = await fetch(`${baseUrl}/api/admin/accounts/${deletionCandidate.id}`, {
+    method: 'DELETE',
+    headers: { Origin: browserOrigin, Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedUpdatedAt: deletionCandidateVersion, confirmation: `DELETE ${deletionCandidate.email}` }),
+  });
+  assert.equal(deletionResponse.status, 200);
+  const accountsAfterDeletionResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { Cookie: adminCookie } });
+  assert.equal((await accountsAfterDeletionResponse.json()).accounts.some((account) => account.id === deletionCandidate.id), false);
+  const recreationResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { Origin: browserOrigin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Recreated Customer', email: deletionCandidate.email, phone: '+1 202 555 0108',
+      password: 'replacement-password', dateOfBirth: '1992-02-02', gender: 'Other',
+    }),
+  });
+  assert.equal(recreationResponse.status, 201);
+  assert.notEqual((await recreationResponse.json()).user.id, deletionCandidate.id);
+
   const secondLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { Origin: browserOrigin, 'Content-Type': 'application/json' },

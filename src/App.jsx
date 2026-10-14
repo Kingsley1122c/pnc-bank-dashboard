@@ -1535,6 +1535,18 @@ async function requestAccountVerification(userId, expectedUpdatedAt) {
   return payload;
 }
 
+async function requestAccountDeletion(userId, expectedUpdatedAt, confirmation) {
+  const response = await fetch(`${getSharedApiBaseUrl()}/api/admin/accounts/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedUpdatedAt, confirmation }),
+  });
+  const payload = await readApiPayload(response);
+  if (!response.ok) throw new Error(payload.message ?? 'Unable to delete the account right now.');
+  return payload;
+}
+
 async function fetchRemoteWithdrawals() {
   const response = await fetch(getWithdrawalsApiUrl(), { credentials: 'include' });
   const payload = await readApiPayload(response);
@@ -2060,6 +2072,8 @@ function App() {
     nextStatus: '',
     confirmLabel: 'Confirm',
     requiresNote: false,
+    noteLabel: 'Reviewer note',
+    notePlaceholder: 'Add next steps or the reason for this decision.',
   });
   const [adminUserStatusFilter, setAdminUserStatusFilter] = useState('All');
   const [adminUserPage, setAdminUserPage] = useState(1);
@@ -3716,6 +3730,8 @@ function App() {
       nextStatus: options.nextStatus ?? '',
       confirmLabel: options.confirmLabel ?? 'Confirm',
       requiresNote: options.requiresNote ?? false,
+      noteLabel: options.noteLabel ?? 'Reviewer note',
+      notePlaceholder: options.notePlaceholder ?? 'Add next steps or the reason for this decision.',
     });
   }
 
@@ -3731,6 +3747,8 @@ function App() {
       nextStatus: '',
       confirmLabel: 'Confirm',
       requiresNote: false,
+      noteLabel: 'Reviewer note',
+      notePlaceholder: 'Add next steps or the reason for this decision.',
     });
   }
 
@@ -4061,14 +4079,26 @@ function App() {
 
     setSelectedUser(targetRecord.name);
 
-    if (action === 'delete') {
-      setAdminNotice('Customer deletion is unavailable because destructive account removal requires a separate retention workflow.');
-      return;
-    }
-
     const authoritativeAccount = accounts.find((account) => account.id === targetRecord.accountId && account.role === 'user');
     if (!authoritativeAccount) {
       setAdminNotice('This customer account is unavailable. Refresh and try again.');
+      return;
+    }
+
+    if (action === 'delete') {
+      openAdminDialog(
+        'delete-account',
+        authoritativeAccount.id,
+        `Delete ${targetRecord.name}`,
+        'This permanently removes account access and private profile data. Financial and audit history remains retained.',
+        {
+          customerMessage: `Type DELETE ${authoritativeAccount.email} to confirm. Accounts with funds or pending money movement cannot be deleted.`,
+          confirmLabel: 'Delete permanently',
+          requiresNote: true,
+          noteLabel: 'Confirmation phrase',
+          notePlaceholder: `DELETE ${authoritativeAccount.email}`,
+        },
+      );
       return;
     }
 
@@ -4104,6 +4134,27 @@ function App() {
       pushAdminActivity(`${activeUser?.name ?? 'Admin'} changed ${targetRecord.name} to ${nextStatus}.`, { promoteToLiveFeed: action !== 'activate' });
     } catch (error) {
       setAdminNotice(error instanceof Error ? error.message : 'Unable to update the account status right now.');
+    }
+  }
+
+  async function applyAccountDeletion(userId, confirmation) {
+    const target = accounts.find((account) => account.id === userId && account.role === 'user');
+    if (!target) {
+      setAdminNotice('This customer account is unavailable. Refresh and try again.');
+      return;
+    }
+
+    try {
+      await requestAccountDeletion(target.id, target.updatedAt, confirmation);
+      setAccounts((current) => current.filter((account) => account.id !== target.id));
+      setAdminUserRecords((current) => current.filter((user) => user.accountId !== target.id));
+      setSelectedAdminUserNames((current) => current.filter((name) => name !== target.name));
+      setSelectedUser('');
+      setAdminUsersView('directory');
+      setAdminNotice(`${target.name} was deleted. Financial and audit history was retained.`);
+      pushAdminActivity(`${activeUser?.name ?? 'Admin'} deleted customer account ${target.id}.`, { promoteToLiveFeed: true });
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Unable to delete the account right now.');
     }
   }
 
@@ -4418,7 +4469,7 @@ function App() {
     }
 
     if (adminDialog.requiresNote && !adminDialog.note.trim()) {
-      setAdminNotice('Add a reviewer note before confirming this case update.');
+      setAdminNotice(adminDialog.kind === 'delete-account' ? 'Enter the exact confirmation phrase.' : 'Add a reviewer note before confirming this case update.');
       return;
     }
 
@@ -4428,6 +4479,10 @@ function App() {
 
     if (adminDialog.kind.startsWith('case-')) {
       handleCaseAction(adminDialog.targetId, adminDialog.nextStatus, adminDialog.note.trim());
+    }
+
+    if (adminDialog.kind === 'delete-account') {
+      void applyAccountDeletion(adminDialog.targetId, adminDialog.note.trim());
     }
 
     closeAdminDialog();
@@ -9630,12 +9685,12 @@ function AdminDashboard({
               ) : null}
               {adminDialog.requiresNote ? (
                 <label className="admin-dialog-note-field">
-                  <span>Reviewer note</span>
+                  <span>{adminDialog.noteLabel}</span>
                   <textarea
                     rows="4"
                     value={adminDialog.note}
                     onChange={(event) => onAdminDialogNoteChange(event.target.value)}
-                    placeholder="Add next steps or the reason for this decision."
+                    placeholder={adminDialog.notePlaceholder}
                   />
                 </label>
               ) : null}

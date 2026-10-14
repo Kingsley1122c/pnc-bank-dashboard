@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { AccountManagementError, updateAccountStatus, verifyAccount } from './account-management.js';
+import { AccountManagementError, deleteAccount, updateAccountStatus, verifyAccount } from './account-management.js';
 import { closeDatabase, initializeDatabase } from './database.js';
 import { createInternalTransfer } from './transactions.js';
 
@@ -66,5 +66,30 @@ test('invalid targets and statuses roll back without notifications or audits', a
     assert.throws(() => updateAccountStatus(db, { adminId: 'ADM-OPERATOR', targetUserId: 'ADM-OPERATOR', status: 'Suspended', expectedUpdatedAt: target.updated_at }), (error) => error.code === 'ACCOUNT_NOT_FOUND');
     assert.equal(db.prepare('SELECT COUNT(*) count FROM notifications').get().count, 0);
     assert.equal(db.prepare('SELECT COUNT(*) count FROM audit_logs').get().count, 0);
+  } finally { closeDatabase(db); }
+});
+
+test('account deletion requires an empty account and erases access data while retaining ledger identity', async () => {
+  const db = await createFixture();
+  try {
+    let target = db.prepare("SELECT * FROM users WHERE id = 'USR-TARGET'").get();
+    assert.throws(
+      () => deleteAccount(db, { adminId: 'ADM-OPERATOR', targetUserId: target.id, expectedUpdatedAt: target.updated_at, confirmation: 'DELETE target@example.com' }),
+      (error) => error instanceof AccountManagementError && error.code === 'NONZERO_BALANCE',
+    );
+
+    db.prepare("UPDATE account_balances SET amount_minor = 0 WHERE user_id = 'USR-TARGET'").run();
+    db.prepare("INSERT INTO sessions (token_hash, user_id, role, created_at, expires_at) VALUES ('target-session', 'USR-TARGET', 'user', 1, 9999999999999)").run();
+    target = db.prepare("SELECT * FROM users WHERE id = 'USR-TARGET'").get();
+    const result = deleteAccount(db, { adminId: 'ADM-OPERATOR', targetUserId: target.id, expectedUpdatedAt: target.updated_at, confirmation: 'DELETE target@example.com' });
+
+    assert.equal(result.deletedUserId, 'USR-TARGET');
+    const deleted = db.prepare("SELECT * FROM users WHERE id = 'USR-TARGET'").get();
+    assert.equal(deleted.status, 'Deleted');
+    assert.equal(deleted.email.endsWith('@deleted.nevoracore.invalid'), true);
+    assert.equal(deleted.account_number, null);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM account_balances WHERE user_id = 'USR-TARGET'").get().count, 0);
+    assert.notEqual(db.prepare("SELECT revoked_at FROM sessions WHERE token_hash = 'target-session'").get().revoked_at, null);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM audit_logs WHERE action = 'account.deleted' AND target_id = 'USR-TARGET'").get().count, 1);
   } finally { closeDatabase(db); }
 });

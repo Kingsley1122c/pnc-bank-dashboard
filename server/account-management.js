@@ -23,7 +23,7 @@ function requireExpectedUpdate(value) {
 }
 
 function getTarget(db, targetUserId) {
-  return db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user'").get(targetUserId);
+  return db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user' AND status != 'Deleted'").get(targetUserId);
 }
 
 function accountResult(db, targetUserId) {
@@ -173,6 +173,61 @@ export function verifyAccount(db, { adminId, targetUserId, expectedUpdatedAt }) 
     }
     audit(db, { adminId, action: 'account.verified', targetUserId, details: { releasedTransferCount: holds.length, releasedAmountMinor }, createdAt: updatedAt });
     return { account: accountResult(db, targetUserId), releasedTransferCount: holds.length, releasedAmountMinor };
+  });
+
+  return execute.immediate();
+}
+
+export function deleteAccount(db, { adminId, targetUserId, expectedUpdatedAt, confirmation }) {
+  const expectedVersion = requireExpectedUpdate(expectedUpdatedAt);
+
+  const execute = db.transaction(() => {
+    requireAdmin(db, adminId);
+    const target = getTarget(db, targetUserId);
+    if (!target) throw new AccountManagementError(404, 'ACCOUNT_NOT_FOUND', 'Customer account not found.');
+    if (target.updated_at !== expectedVersion) throw new AccountManagementError(409, 'ACCOUNT_CONFLICT', 'This account changed. Refresh and try again.');
+    const requiredConfirmation = `DELETE ${target.email}`;
+    if (confirmation !== requiredConfirmation) {
+      throw new AccountManagementError(400, 'CONFIRMATION_REQUIRED', `Enter ${requiredConfirmation} to delete this account.`);
+    }
+
+    const balanceMinor = db.prepare('SELECT COALESCE(SUM(amount_minor), 0) total FROM account_balances WHERE user_id = ?').get(targetUserId).total;
+    if (balanceMinor !== 0) throw new AccountManagementError(409, 'NONZERO_BALANCE', 'Move or withdraw all customer funds before deleting this account.');
+    const pendingTransferCount = db.prepare('SELECT COUNT(*) count FROM pending_transfers WHERE recipient_user_id = ? OR sender_user_id = ?').get(targetUserId, targetUserId).count;
+    if (pendingTransferCount > 0) throw new AccountManagementError(409, 'PENDING_TRANSFERS', 'Resolve all pending transfers before deleting this account.');
+    const openWithdrawalCount = db.prepare("SELECT COUNT(*) count FROM withdrawal_requests WHERE requester_user_id = ? AND status NOT IN ('Rejected', 'Failed')").get(targetUserId).count;
+    if (openWithdrawalCount > 0) throw new AccountManagementError(409, 'OPEN_WITHDRAWALS', 'Resolve all open withdrawal requests before deleting this account.');
+
+    const deletedAt = new Date().toISOString();
+    const result = db.prepare(`
+      UPDATE users SET
+        status = 'Deleted', verification_status = 'Deleted', name = ?, email = ?, phone = NULL,
+        password_hash = ?, segment = NULL, avatar = NULL, avatar_image = NULL, date_of_birth = NULL,
+        gender = NULL, account_number = NULL, routing_number = NULL, raw_json = '{}', updated_at = ?
+      WHERE id = ? AND role = 'user' AND status != 'Deleted' AND updated_at = ?
+    `).run(
+      `Deleted customer ${targetUserId}`,
+      `deleted-${randomUUID()}@deleted.nevoracore.invalid`,
+      `deleted$${randomUUID()}`,
+      deletedAt,
+      targetUserId,
+      expectedVersion,
+    );
+    if (result.changes !== 1) throw new AccountManagementError(409, 'ACCOUNT_CONFLICT', 'This account changed. Refresh and try again.');
+
+    db.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(Date.now(), targetUserId);
+    db.prepare('DELETE FROM auth_action_tokens WHERE user_id = ?').run(targetUserId);
+    db.prepare('DELETE FROM notifications WHERE user_id = ?').run(targetUserId);
+    db.prepare('DELETE FROM saved_banks WHERE user_id = ?').run(targetUserId);
+    db.prepare('DELETE FROM issued_cards WHERE user_id = ?').run(targetUserId);
+    db.prepare('DELETE FROM account_balances WHERE user_id = ?').run(targetUserId);
+    db.prepare(`
+      UPDATE email_outbox SET status = 'suppressed', provider_status = 'suppressed',
+        last_error = 'Recipient account deleted before delivery', updated_at = ?, next_attempt_at = NULL
+      WHERE recipient_user_id = ? AND status IN ('pending', 'processing', 'failed')
+    `).run(deletedAt, targetUserId);
+    audit(db, { adminId, action: 'account.deleted', targetUserId, details: { retainedFinancialHistory: true }, createdAt: deletedAt });
+    return { deletedUserId: targetUserId, deletedAt };
   });
 
   return execute.immediate();

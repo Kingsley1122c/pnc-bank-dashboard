@@ -377,7 +377,7 @@ export function getMigrationStatus(db) {
 }
 
 export function readDatabaseAccounts(db) {
-  const users = db.prepare('SELECT * FROM users ORDER BY id').all();
+  const users = db.prepare("SELECT * FROM users WHERE status != 'Deleted' ORDER BY id").all();
   const balances = db.prepare('SELECT * FROM account_balances ORDER BY user_id, rowid').all();
   const notifications = db.prepare('SELECT * FROM notifications ORDER BY created_at DESC').all();
   const savedBanks = db.prepare('SELECT * FROM saved_banks ORDER BY rowid').all();

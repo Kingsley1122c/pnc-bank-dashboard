@@ -88,9 +88,9 @@ export function createInternalTransfer(db, { senderId, sourceAccount, recipientA
     const existing = getExistingTransfer(db, senderId, scopedIdempotencyKey);
     if (existing) return existing;
 
-    const sender = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user' AND status != 'Suspended'").get(senderId);
+    const sender = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user' AND status IN ('Active', 'Flagged')").get(senderId);
     if (!sender) throw new TransactionError(403, 'SENDER_NOT_ELIGIBLE', 'This account cannot submit transfers.');
-    const recipient = db.prepare("SELECT * FROM users WHERE account_number = ? AND role = 'user' AND status != 'Suspended'").get(normalizedRecipientNumber);
+    const recipient = db.prepare("SELECT * FROM users WHERE account_number = ? AND role = 'user' AND status IN ('Active', 'Flagged')").get(normalizedRecipientNumber);
     if (!recipient) throw new TransactionError(404, 'RECIPIENT_NOT_FOUND', 'Only active registered Nevora Core account numbers are allowed.');
     if (recipient.id === sender.id) throw new TransactionError(400, 'SELF_TRANSFER', 'Choose another Nevora Core account as the recipient.');
 
@@ -208,7 +208,7 @@ export function createAdminAdjustment(db, { adminId, targetUserId, accountLabel,
 
     const admin = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'admin' AND status != 'Suspended'").get(adminId);
     if (!admin) throw new TransactionError(403, 'ADMIN_REQUIRED', 'Administrator authorization is required.');
-    const target = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user' AND status != 'Suspended'").get(targetUserId);
+    const target = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user' AND status IN ('Active', 'Flagged')").get(targetUserId);
     if (!target) throw new TransactionError(404, 'TARGET_NOT_FOUND', 'The selected retail account is unavailable.');
     const balance = db.prepare('SELECT * FROM account_balances WHERE user_id = ? AND label = ? AND currency = ?').get(target.id, normalizedLabel, 'USD');
     if (!balance) throw new TransactionError(400, 'ACCOUNT_NOT_FOUND', 'The selected balance account is unavailable.');

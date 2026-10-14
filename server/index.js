@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createAuthService } from './auth.js';
-import { AccountManagementError, updateAccountStatus, verifyAccount } from './account-management.js';
+import { AccountManagementError, deleteAccount, updateAccountStatus, verifyAccount } from './account-management.js';
 import { CommunicationError, createCampaign, listCampaigns, previewCampaign, retryCampaign } from './communications.js';
 import {
   createDatabaseAccount,
@@ -383,8 +383,9 @@ app.post('/api/auth/register', authRateLimit, async (request, response) => {
       return;
     }
 
-    const nextUserNumber = accounts.reduce((highest, account) => {
-      const numericId = Number(String(account.id ?? '').replace(/^USR-/, ''));
+    const retainedUserIds = database.prepare("SELECT id FROM users WHERE id LIKE 'USR-%'").all();
+    const nextUserNumber = retainedUserIds.reduce((highest, account) => {
+      const numericId = Number(String(account.id).replace(/^USR-/, ''));
       return Number.isFinite(numericId) ? Math.max(highest, numericId) : highest;
     }, 0) + 1;
     const accountNumber = generateNevoraAccountNumber(`${normalizedEmailAddress}-${normalizedPhone}`);
@@ -675,6 +676,25 @@ app.post('/api/admin/accounts/:userId/verify', authService.requireAuth, authServ
       return;
     }
     response.status(500).json({ message: 'Unable to verify the account right now.' });
+  }
+});
+
+app.delete('/api/admin/accounts/:userId', authService.requireAuth, authService.requireRole('admin'), (request, response) => {
+  try {
+    const result = deleteAccount(database, {
+      adminId: request.auth.account.id,
+      targetUserId: request.params.userId,
+      expectedUpdatedAt: request.body?.expectedUpdatedAt,
+      confirmation: request.body?.confirmation,
+    });
+    broadcastEvent('accounts');
+    response.json(result);
+  } catch (error) {
+    if (error instanceof AccountManagementError) {
+      response.status(error.status).json({ code: error.code, message: error.message });
+      return;
+    }
+    response.status(500).json({ message: 'Unable to delete the account right now.' });
   }
 });
 
