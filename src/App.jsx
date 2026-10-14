@@ -2970,10 +2970,13 @@ function App() {
       setAuthMode('login');
       setPublicPage('home');
       setAuthMessage(
-        `Account created successfully. Your Nevora Core account number is ${formatAccountNumber(user.accountNumber)}. Verification by Nevora Core is required before you can receive money from other users.${emailQueued ? ' A welcome email request was accepted by the configured provider.' : ' Welcome email delivery is not confirmed.'}`,
+        `Account created successfully. Your Nevora Core account number is ${formatAccountNumber(user.accountNumber)}. Verification by Nevora Core is required before you can receive money from other users.${emailQueued ? ' Welcome and verification emails were queued for delivery.' : ' Welcome email delivery is not confirmed.'}`,
       );
+      return { created: true, message: '' };
     } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : 'Unable to create the account right now.');
+      const message = error instanceof Error ? error.message : 'Unable to create the account right now.';
+      setAuthMessage(message);
+      return { created: false, message };
     }
   }
 
@@ -4837,14 +4840,22 @@ function AuthScreen({
   }
 
   async function finalizeRegistration() {
-    await onRunLoadingFlow('auth-register', () => handleRegister(capturedPhoto));
-    closeCameraDialog();
+    const result = await onRunLoadingFlow('auth-register', () => handleRegister(capturedPhoto));
+    if (result.created) {
+      closeCameraDialog();
+    } else {
+      setCameraError(result.message);
+    }
   }
 
   async function continueWithoutPhoto() {
     setAuthMessage('Account will be created without a captured profile photo.');
-    await onRunLoadingFlow('auth-register', () => handleRegister(''));
-    closeCameraDialog();
+    const result = await onRunLoadingFlow('auth-register', () => handleRegister(''));
+    if (result.created) {
+      closeCameraDialog();
+    } else {
+      setCameraError(result.message);
+    }
   }
 
   if (isAuthPage) {
@@ -9128,6 +9139,9 @@ function AdminDashboard({
               <div><strong>Resend delivery</strong><span>{emailProviderState.configured ? `Configured • ${emailProviderState.mode}` : 'Awaiting provider configuration'}</span></div>
               <span className={`status-pill ${emailProviderState.mode === 'live' ? 'completed' : 'pending'}`}>{emailProviderState.mode}</span>
             </div>
+            {emailProviderState.mode === 'restricted' ? (
+              <p className="auth-message">Restricted mode is active. Email is delivered only to the configured test recipient; all other recipients are suppressed.</p>
+            ) : null}
             {communicationHistory.map((item) => (
               <div key={item.id} className="mini-row admin-mini-row">
                 <div>
